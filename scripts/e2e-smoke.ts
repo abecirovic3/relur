@@ -25,6 +25,7 @@ import { LOOKUP_DENIED_TOOLS } from '../src/shared/lookup';
 import { hint as shortcutHint } from '../src/shared/shortcuts';
 import { LINK_TRUST_NOTE } from '../src/shared/workspaces';
 import {
+  assertExitedCleanly,
   type Cdp,
   CMD,
   chooseFromNextContextMenu,
@@ -3400,8 +3401,9 @@ exec sleep 600
     // SIGTERM (a test runner, logout) quits without asking and stops the
     // sessions that still run (spec §5); no SIGKILL needed.
     const killed = await app.stop();
-    app = undefined;
     assert.equal(killed, false, 'the app quit on SIGTERM by itself');
+    await assertExitedCleanly(app, 'SIGTERM');
+    app = undefined;
 
     // After a restart (spec §6.1): only the last workspace's project is
     // expanded, showing it; then a project expanded by hand stays so too.
@@ -3421,6 +3423,8 @@ exec sleep 600
       running.main.close();
       await running.stop();
       app = undefined;
+      // Right after a launch, while the window still starts its sessions (spec §5).
+      await assertExitedCleanly(running, 'quit after a restart');
     };
     const afterRestart = await restart('cartweb');
     await afterRestart.checks.toggle('shop');

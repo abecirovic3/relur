@@ -3,6 +3,7 @@
  * the renderer over the Chrome DevTools Protocol and to the main process over
  * the Node inspector. Test use only; packaged builds disable both (M7).
  */
+import assert from 'node:assert/strict';
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -336,6 +337,21 @@ export async function launchApp(options: {
     await stop();
     throw error;
   }
+}
+
+/**
+ * Asserts that the production build's Electron ended with exit code 0, not by
+ * a signal: Electron's command line wrapper exits with 1 when the app aborts
+ * ("quit unexpectedly"). In dev mode electron-vite exits with 0 either way, so
+ * there's nothing to check.
+ */
+export async function assertExitedCleanly(app: RunningApp, what: string): Promise<void> {
+  const child = app.process;
+  if (child.exitCode === null && child.signalCode === null) {
+    await new Promise((resolve) => child.once('exit', resolve));
+  }
+  if (child.spawnfile.endsWith('electron-vite')) return;
+  assert.equal(child.exitCode, 0, `${what}: the app exited cleanly, without crashing`);
 }
 
 /** Only the given environment, plus what's needed to reach the display server. */

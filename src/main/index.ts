@@ -425,6 +425,8 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
   app.on('before-quit', (event) => {
     if (stopped || host.runningCount() === 0) {
       quitting = true;
+      // Nothing cancels the quit from here: no session may start (spec §5).
+      host.close();
       return;
     }
     event.preventDefault();
@@ -472,6 +474,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
         if (response !== 0) return;
       }
       if (status) status.quitting = true;
+      host.close();
       await host.stopAll();
       stopped = true;
       app.quit();

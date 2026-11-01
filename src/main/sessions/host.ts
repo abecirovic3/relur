@@ -87,6 +87,7 @@ export class SessionHost {
   private readonly batchMs: number;
   private readonly killTimeoutMs: number;
   private readonly launchMs: number;
+  private closed = false;
 
   constructor(options: SessionHostOptions = {}) {
     // Roughly 10,000 lines of 200 characters (spec §16).
@@ -97,6 +98,7 @@ export class SessionHost {
   }
 
   spawn(options: SpawnOptions): SessionInfo {
+    if (this.closed) throw new Error('Quitting: no new terminal sessions start');
     const child = pty.spawn(options.command, options.args, {
       name: options.env.TERM ?? 'xterm-256color',
       cols: options.cols ?? 80,
@@ -310,6 +312,17 @@ export class SessionHost {
     for (const sink of session.sinks) sink.close();
     this.sessions.delete(id);
     this.changed();
+  }
+
+  /**
+   * Refuses new sessions from now on, once quitting goes ahead (spec §5). A
+   * start that was already on its way (a view asking for Claude while the
+   * window loads) would otherwise spawn after stopAll, and its process would
+   * end while Electron shuts down: node-pty's exit callback then has no
+   * JavaScript left to call and aborts the app.
+   */
+  close(): void {
+    this.closed = true;
   }
 
   async stopAll(): Promise<void> {

@@ -54,6 +54,16 @@ async function until(check: () => boolean, what: string) {
 }
 
 describe('SessionHost', () => {
+  it('starts no session once closed for quitting, and still stops the running ones', async () => {
+    const host = new SessionHost();
+    const running = host.spawn(sh('sleep 5'));
+    host.close();
+    expect(() => host.spawn(sh('sleep 5'))).toThrow(/Quitting/);
+    expect(host.list().map((s) => s.id)).toEqual([running.id]);
+    await host.stopAll();
+    expect(host.runningCount()).toBe(0);
+  });
+
   it('keeps marks at their place in the output and sends them with the replay', async () => {
     const host = new SessionHost({ batchMs: 5 });
     const session = host.spawn(sh('printf one; read x; printf two; read y'));

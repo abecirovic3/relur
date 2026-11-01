@@ -17,6 +17,7 @@ import { createFixture } from '../src/main/test-support/git-fixtures';
 import { SEED_CONFIG } from '../src/main/test-support/seed-config';
 import { QUIT_ON_CLOSE_LABEL } from '../src/shared/window-close';
 import {
+  assertExitedCleanly,
   type Cdp,
   clickButtonText,
   dialogText,
@@ -65,6 +66,7 @@ async function assertGone(app: RunningApp, processes: number[], root: string, wh
   // An attached inspector keeps Electron's main process from exiting.
   app.main.close();
   assert.ok(await app.exited(15_000), `${what}: the app quit by itself`);
+  await assertExitedCleanly(app, what);
   for (const end = Date.now() + 5_000; Date.now() < end; ) {
     if (processes.every((p) => !alive(p))) break;
     await sleep(100);
