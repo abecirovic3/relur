@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConversationAids, NavigatorState } from '../terminal/conversation';
 import { trpcClient, useTRPC } from '../trpc';
 import { button, iconButton, isMac, Kbd, keyHint } from '../ui/controls';
+import { ChangesIcon, EditorIcon, ResponsesIcon, TrashIcon } from '../ui/icons';
 import { ChangesPanel, PrBadge } from './ChangesPanel';
 import { UnlinkDialog } from './DeleteWorkspaceDialog';
 import { OpenAllDialog, showAppNotice, useOpenInEditor } from './EditorPicker';
@@ -50,11 +51,14 @@ function showWatchLimitNotice() {
 function ResponsesControls({
   workspaceId,
   open,
+  compact,
   onToggle,
   onToggleFull,
 }: {
   workspaceId: string;
   open: boolean;
+  /** A narrow window: the icon alone, its name in the tooltip. */
+  compact: boolean;
   onToggle: () => void;
   /** Full view and back, while the panel is open. */
   onToggleFull: () => void;
@@ -106,12 +110,19 @@ function ResponsesControls({
       <button
         type="button"
         data-responses-toggle
-        className={button('ghost', 'sm')}
+        className={compact ? `${iconButton} aria-pressed:bg-raised` : button('ghost', 'sm')}
         aria-pressed={open}
-        title={`Every response of the conversation, each with Copy (${keyHint('responses')}); ${keyHint('copyResponse')} copies the last one`}
+        aria-label="Responses"
+        title={`${compact ? 'Responses: e' : 'E'}very response of the conversation, each with Copy (${keyHint('responses')}); ${keyHint('copyResponse')} copies the last one`}
         onClick={onToggle}
       >
-        Responses <Kbd>{keyHint('responses')}</Kbd>
+        {compact ? (
+          <ResponsesIcon />
+        ) : (
+          <>
+            Responses <Kbd>{keyHint('responses')}</Kbd>
+          </>
+        )}
       </button>
     </>
   );
@@ -159,6 +170,28 @@ export function WorkspaceView({
   // The Responses panel (spec §6.8) and the Claude terminal it scrolls.
   const [responsesOpen, setResponsesOpen] = useState(false);
   const [responsesFull, setResponsesFull] = useState(false);
+  // The Changes panel's full view (spec §6.4), reset when the panel closes.
+  const [changesFull, setChangesFull] = useState(false);
+  useEffect(() => {
+    if (!changesOpen) setChangesFull(false);
+  }, [changesOpen]);
+  const toggleChangesFull = useCallback(() => {
+    setChangesFull((full) => !full);
+    setResponsesFull(false);
+  }, []);
+  const changesOpenRef = useRef(changesOpen);
+  changesOpenRef.current = changesOpen;
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => {
+      if (matchShortcut('changesFullView', e, isMac) === -1 || !changesOpenRef.current) return;
+      if (document.querySelector('dialog[open]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleChangesFull();
+    };
+    window.addEventListener('keydown', listener, true);
+    return () => window.removeEventListener('keydown', listener, true);
+  }, [toggleChangesFull]);
   const [aids, setAids] = useState<ConversationAids | null>(null);
   const [alternate, setAlternate] = useState(false);
   const onNavigator = useCallback((state: NavigatorState) => setAlternate(state.alternate), []);
@@ -399,55 +432,27 @@ export function WorkspaceView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="shrink-0 border-b border-line bg-surface px-4 pt-3 pb-2.5">
+      <header className="shrink-0 bg-surface px-4 pt-3 pb-2.5">
         <div className="flex items-center gap-2.5">
           {workspace.task.id ? (
             <span className="rounded-sm border border-line bg-raised px-1.5 py-px font-mono text-sm">
               {workspace.task.id}
             </span>
           ) : null}
-          <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">
+          <h1 className="min-w-0 truncate text-lg font-semibold">
             {workspace.task.title || workspace.name}
           </h1>
           <button
             type="button"
-            data-open-editor
-            className={button('ghost', 'sm')}
-            title={`Open ${linked ? `${mainName} ` : ''}in its editor (${keyHint('openInEditor')})`}
-            onClick={openMainInEditor}
+            data-delete-workspace
+            className={`${iconButton} -ml-1 text-fg-subtle`}
+            title="Delete workspace…"
+            aria-label="Delete workspace"
+            onClick={onDelete}
           >
-            Open in editor <Kbd>{keyHint('openInEditor')}</Kbd>
+            <TrashIcon />
           </button>
-          {linked ? (
-            <button
-              type="button"
-              data-open-editor-menu
-              className={iconButton}
-              title="Open all repositories in their editors"
-              aria-label="More ways to open in editor"
-              onClick={() =>
-                void trpcClient.ui.contextMenu
-                  .mutate({ items: [{ id: 'all', label: 'Open all…' }] })
-                  .then((choice) => choice === 'all' && setOpenAll(true))
-              }
-            >
-              ▾
-            </button>
-          ) : null}
-          <button
-            type="button"
-            data-changes-toggle
-            className={button('ghost', 'sm')}
-            aria-pressed={changesOpen}
-            title={`Changes against ${workspace.baseBranch} (${keyHint('changes')})`}
-            onClick={onToggleChanges}
-          >
-            Changes{' '}
-            <span className="font-mono text-xs text-fg-subtle">
-              {changesLoaded ? changedFiles : ''}
-            </span>
-            <Kbd>{keyHint('changes')}</Kbd>
-          </button>
+          <span className="flex-1" />
           <button
             type="button"
             className={iconButton}
@@ -512,6 +517,8 @@ export function WorkspaceView({
         ) : null}
         <SkillsChanged workspaceId={workspace.id} />
       </header>
+      {/* The workspace's identity above, its views below (spec §6.2). */}
+      <hr data-header-separator className="h-px shrink-0 border-0 bg-line" />
 
       <TerminalTabs
         sessions={sessions}
@@ -533,17 +540,74 @@ export function WorkspaceView({
           linked ? (session) => projectName(session.projectId ?? workspace.projectId) : undefined
         }
         actions={
-          active?.kind === 'claude' && !showDoc ? (
-            <ResponsesControls
-              workspaceId={workspace.id}
-              open={responsesOpen}
-              onToggle={() => {
-                setResponsesOpen((open) => !open);
-                setResponsesFull(false);
-              }}
-              onToggleFull={() => setResponsesFull((full) => !full)}
-            />
-          ) : null
+          // The workspace's views (spec §6.2): Responses on a Claude tab, Open in
+          // editor and Changes; icons with tooltips in a narrow window.
+          <div data-view-buttons className="flex items-center gap-1">
+            {active?.kind === 'claude' && !showDoc ? (
+              <ResponsesControls
+                workspaceId={workspace.id}
+                open={responsesOpen}
+                compact={narrow}
+                onToggle={() => {
+                  setResponsesOpen((open) => !open);
+                  setResponsesFull(false);
+                }}
+                onToggleFull={() => {
+                  setResponsesFull((full) => !full);
+                  setChangesFull(false);
+                }}
+              />
+            ) : null}
+            <span className="flex items-center">
+              <button
+                type="button"
+                data-open-editor
+                className={narrow ? iconButton : button('ghost', 'sm')}
+                aria-label="Open in editor"
+                title={`Open ${linked ? `${mainName} ` : ''}in its editor (${keyHint('openInEditor')})`}
+                onClick={openMainInEditor}
+              >
+                {narrow ? (
+                  <EditorIcon />
+                ) : (
+                  <>
+                    Open in editor <Kbd>{keyHint('openInEditor')}</Kbd>
+                  </>
+                )}
+              </button>
+              {linked ? (
+                <button
+                  type="button"
+                  data-open-editor-menu
+                  className={`${iconButton} w-4`}
+                  title="Open all repositories in their editors"
+                  aria-label="More ways to open in editor"
+                  onClick={() =>
+                    void trpcClient.ui.contextMenu
+                      .mutate({ items: [{ id: 'all', label: 'Open all…' }] })
+                      .then((choice) => choice === 'all' && setOpenAll(true))
+                  }
+                >
+                  ▾
+                </button>
+              ) : null}
+            </span>
+            <button
+              type="button"
+              data-changes-toggle
+              className={narrow ? `${iconButton} w-auto gap-1 px-1` : button('ghost', 'sm')}
+              aria-pressed={changesOpen}
+              aria-label={`Changes${changesLoaded ? `, ${changedFiles} files` : ''}`}
+              title={`Changes against ${workspace.baseBranch} (${keyHint('changes')})`}
+              onClick={onToggleChanges}
+            >
+              {narrow ? <ChangesIcon /> : 'Changes'}
+              <span className="font-mono text-xs text-fg-subtle">
+                {changesLoaded ? changedFiles : ''}
+              </span>
+              {narrow ? null : <Kbd>{keyHint('changes')}</Kbd>}
+            </button>
+          </div>
         }
       />
       {merged ? (
@@ -641,7 +705,7 @@ export function WorkspaceView({
       <div className="flex min-h-0 flex-1">
         {/* Hidden, not removed, in the Responses panel's full view: the terminal keeps its state. */}
         <div
-          className={`min-h-0 min-w-0 flex-1 flex-col bg-term ${responsesShown && responsesFull ? 'hidden' : 'flex'}`}
+          className={`min-h-0 min-w-0 flex-1 flex-col bg-term ${(responsesShown && responsesFull) || (changesOpen && changesFull) ? 'hidden' : 'flex'}`}
         >
           {showDoc && workspace.workflow ? (
             <SpecView
@@ -661,14 +725,17 @@ export function WorkspaceView({
             />
           ) : null}
         </div>
-        {responsesShown ? (
+        {responsesShown && !(changesOpen && changesFull) ? (
           <ResponsesPanel
             workspaceId={workspace.id}
             aids={aids}
             alternate={alternate}
             narrow={narrow}
             full={responsesFull}
-            onToggleFull={() => setResponsesFull((full) => !full)}
+            onToggleFull={() => {
+              setResponsesFull((full) => !full);
+              setChangesFull(false);
+            }}
             onClose={() => {
               setResponsesOpen(false);
               setResponsesFull(false);
@@ -680,6 +747,8 @@ export function WorkspaceView({
             workspace={workspace}
             projects={projects}
             narrow={narrow}
+            full={changesFull}
+            onToggleFull={toggleChangesFull}
             focus={changesFocus}
             onClose={onToggleChanges}
           />

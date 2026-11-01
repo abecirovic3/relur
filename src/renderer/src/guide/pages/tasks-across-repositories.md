@@ -44,7 +44,7 @@ The header shows the primary repository's chip in full: its name, **primary**, `
 - **Hover a linked chip**, or move to it with <kbd>Tab</kbd>, to see its branch and base branch (each repository has its own base, for example `master` in one and `dev` in another), its worktree folder, its setup and its pull request.
 - **Click it**, or press <kbd>↵</kbd>, for its menu: **Open in editor** (that repository, in its project's editor), **New shell in <repo>**, **{{reveal}}**, **Show in Changes** (the Changes panel, at that repository's section) and **Unlink <repo>…**. The sidebar shows a **+n** after the workspace's title, and every linked project lists the workspace too, as a muted `↗` row that opens it, and counts it as `↗ n` on its row ([The sidebar](sidebar#the-counts-on-a-project)).
 
-**Open in editor** in the header opens the primary repository; the **▾** next to it has **Open all…**, which lists every repository with the editor it will use. Untick the ones you don't need. Repositories on VS Code (or Cursor) open together in one window; each repository on another editor gets its own, and more than three windows ask first. See [Open in editor](open-in-editor#open-all).
+**Open in editor** in the tab bar opens the primary repository; the **▾** next to it has **Open all…**, which lists every repository with the editor it will use. Untick the ones you don't need. Repositories on VS Code (or Cursor) open together in one window; each repository on another editor gets its own, and more than three windows ask first. See [Open in editor](open-in-editor#open-all).
 
 The **+** after the terminal tabs asks which repository the new shell is for; <kbd>{{key:newShell}}</kbd> opens one in the primary.
 

@@ -1,6 +1,6 @@
 # Deleting a workspace
 
-**Delete workspace…** in the workspace's **⋯** menu or the sidebar's context menu removes its worktree and stops its terminals. A merged workspace and a failed setup also offer **Delete…**. The dialog says what goes and what stays, Cancel has the focus, and it warns you first when the workspace has:
+The trash icon after the workspace's title, **Delete workspace…** in its **⋯** menu, or the sidebar's context menu removes its worktree and stops its terminals. A merged workspace and a failed setup also offer **Delete…**. The dialog says what goes and what stays, Cancel has the focus, and it warns you first when the workspace has:
 
 - uncommitted changes, listed;
 - commits that aren't pushed;

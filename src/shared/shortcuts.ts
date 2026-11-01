@@ -113,6 +113,11 @@ export const SHORTCUTS = {
     label: 'Show or hide the Changes panel',
     chords: [{ mod: true, shift: true, code: 'KeyD' }],
   },
+  changesFullView: {
+    group: 'Workspaces',
+    label: 'Changes panel: full view or back',
+    chords: [{ mod: true, shift: true, code: 'KeyM' }],
+  },
   continueWorkflow: {
     group: 'Workspaces',
     label: 'Continue the workflow; at a gate, go to Claude',

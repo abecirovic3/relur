@@ -26,6 +26,11 @@ Shared rules:
 - **States:** hover (primary/danger: opacity 86–88%; others: `bg-raised`), focus ring, pressed toggle (`bg-selected border-line-strong text-fg`, `aria-pressed`), disabled.
 - **Keyboard:** Enter and Space activate. Toggles expose `aria-pressed`. Every icon-only button has a tooltip with its shortcut.
 
+
+## Icons
+
+`ui/icons.tsx`: 14px line icons drawn in the current text colour (16-unit box, 1.5 stroke, round caps and joins), so they follow both themes and the control's hover colour. Decorative (`aria-hidden`): the control has an `aria-label` and a tooltip with its shortcut. Used for the narrow window's view buttons (Responses, Open in editor, Changes) and the header's Delete workspace….
+
 ## Input / path field
 
 - `h-7.5 px-2.5 rounded-md bg-term border border-line-strong`. Paths and branches use `font-mono text-sm`; prose uses `text-base`.
@@ -123,17 +128,17 @@ Spec §6.1. Built in `Sidebar.tsx`; which projects are open is kept by `ui/proje
 
 ## Workspace header
 
-Spec §6.2, §13.5, §21.4. `header` in `WorkspaceView.tsx`: `bg-surface border-b-line px-4 pt-3 pb-2.5`. Rows top to bottom:
+Spec §6.2, §13.5, §21.4. `header` in `WorkspaceView.tsx`: `bg-surface px-4 pt-3 pb-2.5`, followed by a 1px separator (`hr`, `h-px bg-line`) above the tab bar: the workspace's identity above, its views below. Rows top to bottom:
 
 - **Title row** (`gap-2.5`):
-  - Task id chip `font-mono text-sm bg-raised border-line rounded-sm px-1.5` (only with an id), then the title `text-lg font-semibold`, truncated, filling the row.
-  - **Open in editor ⌘E**: ghost sm with its hint; tooltip "Open [<primary>] in its editor (⌘E)". In a linked workspace it is followed by a 24px ▾ `iconButton` (tooltip "Open all repositories in their editors") whose native menu has **Open all…**. See Open in editor.
-  - **Changes ⌘⇧D**: ghost sm toggle (`aria-pressed`), the file count across repositories in `font-mono text-xs text-fg-subtle`.
-  - **⋯** (24px `iconButton`): the workspace menu.
+  - Task id chip `font-mono text-sm bg-raised border-line rounded-sm px-1.5` (only with an id), then the title `text-lg font-semibold`, truncated.
+  - **Delete workspace…**: a 24px `iconButton` with the trash icon right after the title, quiet (`text-fg-subtle`, `fg` on hover), tooltip "Delete workspace…"; it opens the delete confirmation.
+  - **⋯** (24px `iconButton`) at the right: the workspace menu.
 - **Repository chips** (linked workspaces only, `mt-2`): see Repository chips.
 - **Branch row** (`mt-1.5 font-mono text-sm text-fg-muted`, selectable): `branch ← base` (the arrow `fg-subtle`; dropped in a linked workspace, the primary chip has it), `ports a–b` in `fg-subtle` (tooltip: $PORT is the first), and in a single-repository workspace its PR badge.
 - **Workflow row** (`mt-2 gap-3`, only when a workflow applies): the stepper, then the workflow actions. See Workflow stepper.
 - **Skills changed** (when the profile's skill sources changed since Claude started): "Skills changed since Claude started." `text-sm text-fg-muted` and a secondary sm **Restart Claude**.
+- **View buttons** (`data-view-buttons`, the tab bar's right side, `gap-1`): **Responses ⇧⌘R** on a Claude tab (see Responses panel), **Open in editor ⌘E** (ghost sm with its hint; tooltip "Open [<primary>] in its editor (⌘E)"; in a linked workspace followed by a narrow ▾ `iconButton`, tooltip "Open all repositories in their editors", whose native menu has **Open all…**; see Open in editor) and **Changes ⇧⌘D** (ghost sm toggle, `aria-pressed`, the file count across repositories in `font-mono text-xs text-fg-subtle`). Below 900px window width each is a 24px `iconButton` with its icon (Responses: speech bubble, Open in editor: arrow out of a square, Changes: ± with the count beside it), named in its tooltip with the shortcut and in `aria-label`.
 - **Bars under the tab strip** (each `bg-surface border-b-line px-4 py-2 text-md`): merged ("<branch> is merged into <base>. Delete workspace?" with secondary sm **Delete…**), setup failed (see Linked repositories), "Running setup. Claude starts when it finishes.", or "Claude isn't running in this workspace." with secondary sm **Start Claude** (and "↵ restart · ⌘W close" on a Claude tab).
 - **Workspace menu (⋯)**, native: **Link another repository…** (disabled with the reason in the label: "(every project is in)" or "(<profile> has no other projects)") · **Unlink <repo>…** for each linked repository · **Delete workspace…**. The primary can't be unlinked.
 
@@ -178,7 +183,7 @@ Spec §13.4–§13.5. `WorkflowStepper` and `WorkflowActions` in `WorkflowViews.
 
 Spec §6.13. `EditorPicker.tsx` (`EditorPicker`, `ChooseEditorDialog`, `OpenAllDialog`, `useOpenInEditor`).
 
-- **Entry points:** the workspace header's ghost sm **Open in editor ⌘E** (the primary worktree) and, in a linked workspace, the ▾ icon button next to it with a native menu holding **Open all…**; each linked repository chip's menu; the project view's secondary lg **Open in editor ⌘E** (main checkout); the Changes panel (a file row's **Open** and the diff header's ghost **Open in editor**, below); the spec view's **Open in editor**. ⌘E opens the primary worktree from anywhere in the workspace view, except while a dialog is open.
+- **Entry points:** the tab bar's ghost sm **Open in editor ⌘E** (a view button, see Workspace header) (the primary worktree) and, in a linked workspace, the ▾ icon button next to it with a native menu holding **Open all…**; each linked repository chip's menu; the project view's secondary lg **Open in editor ⌘E** (main checkout); the Changes panel (a file row's **Open** and the diff header's ghost **Open in editor**, below); the spec view's **Open in editor**. ⌘E opens the primary worktree from anywhere in the workspace view, except while a dialog is open.
 - **Editor setting** (`EditorPicker`): a native select (`inputClass`) of the editors found on this machine (one chosen earlier but not found stays listed with " (not found)"), "Custom command…", and a first "none" option ("Not set: the first Open in editor asks" in Edit profile; "Use the profile's editor (<name>)" in the project's Setup tab). With none found: "None of VS Code, Cursor, IntelliJ IDEA, WebStorm or Zed was found; use a custom command." (`text-sm text-fg-subtle`). Custom shows two mono inputs: "Open a folder · {path}" (placeholder `code {path}`) and "Open a file at a line · {file} {line} · optional", with the note that without it a file opens as its folder. The project's picker saves on change (custom commands 700ms after typing stops) and shows "Saved".
 - **Choose an editor** (first use, 500px dialog): one explanatory line, the picker preselecting the first editor found, "Only for <project>" checkbox (unticked saves to the profile), Cancel and primary **Save and open**. Errors under the picker in `st-error`.
 - **Open all…** (500px dialog "Open all in editors"): one checkbox row per repository (name mono, then its editor in `text-sm text-fg-subtle`, or "no editor set: choose one in Edit profile › General" with the box disabled); all with an editor ticked. Below: "n windows: repositories on VS Code or Cursor share one." (`text-sm text-fg-subtle`), or "Nothing ticked." Primary **Open** (disabled with nothing ticked). Above 3 windows the first Open turns the line into "Open n editor windows?" in `text-md text-st-permission`, the buttons into **Back** and **Open n windows**. ⌘↵ submits, Esc cancels.
@@ -241,10 +246,12 @@ Spec §13.7. Edit profile › **Task lookup** (`ProfileLookupEditor` in `TaskLoo
 
 ## Changes panel
 
-- 380px on the right (300 below 900px). Off by default at minimum size.
-- **Header:** "Changes vs <base>", +/− totals, ×. Linked workspaces: "Changes · n repositories" and the totals across all of them.
+- On the right, 380px (360 below 900px window width), off by default. A `cursor-col-resize` edge (8px, `hover:bg-line-strong/60`, tooltip "Drag to resize; double-click for the default width") drags it between 360px and 75% of the workspace area; double-click resets it. The width is kept in local storage.
+- **Full view** (⇧⌘M): the panel fills the workspace area (the terminal and the Responses panel hidden, not stopped). The panel takes the focus when it changes size, so Esc reaches it: full view → side panel; Esc beside the terminal returns focus to the terminal.
+- **Header:** "Changes vs <base>", +/− totals, ghost sm **Full view** (`aria-pressed`; reads **Side panel** in full view; tooltips name ⇧⌘M and Esc), ×. Linked workspaces: "Changes · n repositories" and the totals across all of them.
 - **File rows:** h-6.5, mono `text-sm`; kind letter M/A/D (amber/green/red, plus the letter itself), path ellipsized from the left, +n −n. Selected row: `bg-selected`.
 - **Open in editor:** on hover or keyboard focus within a file row, a small **Open** button at its right (`h-5.5 px-1.5 rounded-sm border-line-strong bg-raised text-xs text-fg-muted`, hover `fg`; tooltip "Open in editor, at its first change"); none on deleted files. The diff header has a ghost sm **Open in editor** (at the cursor line in the new side, else the first change).
+- **Diff header** (30px, `border-b-line px-3.5`): the path, ghost sm **Open in editor**, and the style switch: a segmented control (`fieldset`, `rounded-md border-line-strong p-px`) of **Unified** and **Side by side** (each `h-5 px-1.5 text-xs rounded-sm`; the chosen one `bg-raised font-medium text-fg`, the other `text-fg-muted`, `aria-pressed`). One app-wide setting, kept in local storage. When the diff is narrower than 640px, side by side shows unified with a line under the header (`bg-surface border-b-line px-3.5 py-1 text-xs text-fg-subtle`): "Too narrow for side by side: widen the panel or use Full view (⇧⌘M)".
 - **Diff:** `font-mono` 11.5/18, two line-number columns. Added lines `bg-diff-add-bg` with a `text-diff-add` +; removed lines `bg-diff-del-bg` with a −. Hunk headers `bg-band text-fg-subtle`.
 - **Empty:** "No changes yet" plus one line of explanation.
 - **Linked workspaces:** one section per repository, primary first, above the diff.
@@ -252,7 +259,7 @@ Spec §13.7. Edit profile › **Task lookup** (`ProfileLookupEditor` in `TaskLoo
   - Groups "Committed n" (right: `↑n not pushed` or "pushed") and "Uncommitted n", 24px `text-xs font-semibold text-fg-subtle`, then the usual file rows. Empty groups are hidden; a repository without changes shows "No changes yet".
   - Controls row: Commit n → Push ↑n → Create PR, sm secondary buttons joined by `→`. Each is enabled only when it has something to do (Create PR needs pushed commits; tooltip names the missing step). With a PR, the last one reads "View PR #n". The buttons act on that repository only.
   - The file path row reads `<repo> · <path>`. ↑↓ move across sections.
-- **Keyboard:** ⌘⇧D toggles. With the panel focused, ↑↓ pick a file, Enter opens it in the editor, Esc returns to the terminal.
+- **Keyboard:** ⌘⇧D toggles; ⇧⌘M toggles full view while open. With the panel focused, ↑↓ pick a file, Enter opens it in the editor, Esc leaves full view, else returns to the terminal. The toggles do nothing while a dialog is open.
 
 ## Claude terminal decorations
 
@@ -531,6 +538,7 @@ Every built shortcut is defined once in `src/shared/shortcuts.ts` (key handlers,
 | Copy the last response | ⌥C |
 | Responses panel | ⇧⌘R |
 | Responses panel: full view or back | ⇧⌘F |
+| Changes panel: full view or back | ⇧⌘M |
 | Collapse quick actions | ⌘. |
 | Start Claude here (home, project main checkout) | ⌘L |
 | Open in editor | ⌘E |

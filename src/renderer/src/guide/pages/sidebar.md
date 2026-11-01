@@ -4,7 +4,7 @@ The sidebar shows the profile you're in: its name and number of workspaces, **Ho
 
 Right-click a project for **Remove from <profile>…**. Right-click a workspace for:
 
-- **Open in editor**: its worktree in your [editor](open-in-editor), the same as the header's button;
+- **Open in editor**: its worktree in your [editor](open-in-editor), the same as the tab bar's button;
 - **{{reveal}}**: its worktree folder;
 - **Copy path**: the worktree's full path;
 - **Copy branch name**;

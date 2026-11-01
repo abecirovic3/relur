@@ -4,12 +4,14 @@
 
 ## The Changes panel
 
-**Changes** in the workspace header, or <kbd>{{key:changes}}</kbd>, shows what the workspace changed against its base branch, in two groups:
+**Changes** at the right of the tab bar, or <kbd>{{key:changes}}</kbd>, shows what the workspace changed against its base branch, in two groups:
 
 - **Committed**: commits since the branch left the base.
 - **Uncommitted**: staged, unstaged and new files.
 
-Pick a file to see its diff, read-only. **Unified** switches to side by side. <kbd>↑</kbd> <kbd>↓</kbd> move between files; <kbd>Esc</kbd> goes back to the terminal.
+Pick a file to see its diff, read-only. **Unified** and **Side by side** above the diff choose how it's shown; the choice stays for every workspace, also after a restart. Side by side needs room: in a narrow panel the diff stays unified and says so, until you widen the panel or use Full view. <kbd>↑</kbd> <kbd>↓</kbd> move between files; <kbd>Esc</kbd> goes back to the terminal.
+
+Drag the panel's left edge to make it wider or narrower; double-click the edge for the default width. The width stays after a restart. **Full view** in the panel's header, or <kbd>{{key:changesFullView}}</kbd>, gives it the whole workspace area, with the terminal hidden for the moment; **Side panel**, <kbd>{{key:changesFullView}}</kbd> or <kbd>Esc</kbd> puts it back.
 
 To change a file, open it in your editor: **Open** on a file's row opens it at its first change; **Open in editor** above the diff opens it at the line you clicked in the diff, or at the first change. It uses the editor of the file's project. See [Open in editor](open-in-editor).
 

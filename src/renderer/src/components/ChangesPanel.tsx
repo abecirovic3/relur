@@ -2,7 +2,15 @@ import { type ChangedFile, type ChangeGroup, diffFirstLine, type FileDiff } from
 import type { Project } from '@shared/schemas';
 import { PR_LABEL, type PrStatus, type Workspace, type WorkspaceRepo } from '@shared/workspaces';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import {
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { trpcClient, useTRPC } from '../trpc';
 import { button, iconButton, inputClass, keyHint } from '../ui/controls';
 import { PrimaryTag } from './DeleteWorkspaceDialog';
@@ -560,6 +568,269 @@ function RepoControls({
   );
 }
 
+const WIDTH_KEY = 'changes-panel-width';
+const STYLE_KEY = 'changes-diff-style';
+/** Its width beside the terminal (spec §6.4): from MIN_WIDTH to MAX_SHARE of the workspace area. */
+const MIN_WIDTH = 360;
+const MAX_SHARE = 0.75;
+const defaultWidth = (narrow: boolean) => (narrow ? MIN_WIDTH : 380);
+/** The diff's width side by side needs; below it the diff is unified, with a hint. */
+const SPLIT_MIN_WIDTH = 640;
+
+type DiffStyle = 'unified' | 'split';
+
+/** Local storage may be unavailable (a private profile): the defaults apply then. */
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function store(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // kept for this run only
+  }
+}
+
+const storedStyle = (): DiffStyle => (stored(STYLE_KEY) === 'split' ? 'split' : 'unified');
+
+/** Unified or Side by side: one setting for the whole app, kept across restarts (spec §6.4). */
+function useDiffStyle(): [DiffStyle, (style: DiffStyle) => void] {
+  const [style, setStyle] = useState<DiffStyle>(storedStyle);
+  useEffect(() => {
+    // Another window's panel changed it.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STYLE_KEY) setStyle(storedStyle());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  return [
+    style,
+    (next) => {
+      setStyle(next);
+      store(STYLE_KEY, next);
+    },
+  ];
+}
+
+/** An element's width, followed as it changes. */
+function useWidth(element: HTMLElement | null): number {
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    if (!element) return;
+    const observer = new ResizeObserver(() => setWidth(element.clientWidth));
+    observer.observe(element);
+    setWidth(element.clientWidth);
+    return () => observer.disconnect();
+  }, [element]);
+  return width;
+}
+
+/** The diff header's style switch, like a segmented control (components.md: Changes panel). */
+function DiffStyleSwitch({
+  style,
+  onChange,
+}: {
+  style: DiffStyle;
+  onChange: (style: DiffStyle) => void;
+}) {
+  const option = (value: DiffStyle, label: string, title: string) => (
+    <button
+      type="button"
+      data-diff-style={value}
+      aria-pressed={style === value}
+      title={title}
+      className={`h-5 rounded-sm px-1.5 text-xs whitespace-nowrap transition-colors duration-120 ease-out-quiet ${
+        style === value ? 'bg-raised font-medium text-fg' : 'text-fg-muted hover:text-fg'
+      }`}
+      onClick={() => onChange(value)}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <fieldset
+      aria-label="Diff style"
+      className="m-0 flex min-w-0 shrink-0 items-center gap-px rounded-md border border-line-strong p-px"
+    >
+      {option('unified', 'Unified', 'One column, removed lines above added ones')}
+      {option('split', 'Side by side', 'The old version on the left, the new one on the right')}
+    </fieldset>
+  );
+}
+
+/**
+ * The selected file's diff (spec §6.4): its header (path, Open in editor, the
+ * style switch) and Monaco's diff. Side by side falls back to unified while
+ * the diff is narrower than SPLIT_MIN_WIDTH, saying how to get room.
+ */
+function DiffPane({
+  label,
+  openButton,
+  diff,
+  path,
+  cursorLine,
+}: {
+  label: ReactNode;
+  openButton: ReactNode;
+  /** The diff to show, once loaded for the selected file. */
+  diff: FileDiff | null;
+  path: string;
+  cursorLine: { current: number | null };
+}) {
+  const [style, setStyle] = useDiffStyle();
+  const [area, setArea] = useState<HTMLDivElement | null>(null);
+  const width = useWidth(area);
+  const tooNarrow = style === 'split' && width > 0 && width < SPLIT_MIN_WIDTH;
+  return (
+    <>
+      <div className="flex h-[30px] shrink-0 items-center gap-2 border-b border-line px-3.5">
+        {label}
+        {openButton}
+        <DiffStyleSwitch style={style} onChange={setStyle} />
+      </div>
+      {tooNarrow ? (
+        <div
+          data-split-fallback
+          className="shrink-0 border-b border-line bg-surface px-3.5 py-1 text-xs text-fg-subtle"
+        >
+          Too narrow for side by side: widen the panel or use Full view (
+          {keyHint('changesFullView')}).
+        </div>
+      ) : null}
+      <div ref={setArea} data-diff-area className="min-h-0 flex-1 bg-term">
+        {diff ? (
+          <DiffView
+            diff={diff}
+            path={path}
+            split={style === 'split' && !tooNarrow}
+            cursorLine={cursorLine}
+          />
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+/** Full view and back, in the panel's header (like the Responses panel's). */
+function FullViewButton({ full, onToggle }: { full: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      data-changes-full
+      className={button('ghost', 'sm')}
+      aria-pressed={full}
+      title={
+        full
+          ? `Back to the side panel (Esc, ${keyHint('changesFullView')})`
+          : `Over the whole workspace (${keyHint('changesFullView')})`
+      }
+      onClick={onToggle}
+    >
+      {full ? 'Side panel' : 'Full view'}
+    </button>
+  );
+}
+
+/**
+ * The panel's frame (spec §6.4): beside the terminal its left edge drags to
+ * resize it (double-click resets it), the width kept across restarts; in
+ * Full view it takes the whole workspace area. Esc leaves Full view first.
+ */
+function ChangesFrame({
+  narrow,
+  full,
+  onToggleFull,
+  onKeyDown,
+  children,
+}: {
+  narrow: boolean;
+  full: boolean;
+  onToggleFull: () => void;
+  onKeyDown: (e: KeyboardEvent) => void;
+  children: ReactNode;
+}) {
+  const asideRef = useRef<HTMLElement>(null);
+  // In focus when it changes size, so Esc reaches it (the terminal may be hidden).
+  const sized = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when full view changes
+  useEffect(() => {
+    if (sized.current) asideRef.current?.focus();
+    sized.current = true;
+  }, [full]);
+  const saved = Number(stored(WIDTH_KEY));
+  const [width, setWidth] = useState(() =>
+    Number.isFinite(saved) && saved >= MIN_WIDTH ? saved : defaultWidth(narrow),
+  );
+  const [area, setArea] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => setArea(asideRef.current?.parentElement ?? null), []);
+  const areaWidth = useWidth(area);
+  const clamp = (value: number) =>
+    Math.max(MIN_WIDTH, Math.min(value, areaWidth > 0 ? areaWidth * MAX_SHARE : value));
+  const shown = clamp(width);
+  // The drag's latest width, saved on release (the render may not have caught up yet).
+  const drag = useRef<{ x: number; width: number; now: number } | null>(null);
+  const onDragStart = (event: PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = { x: event.clientX, width: shown, now: shown };
+  };
+  const onDragMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    drag.current.now = clamp(drag.current.width + drag.current.x - event.clientX);
+    setWidth(drag.current.now);
+  };
+  const onDragEnd = () => {
+    if (!drag.current) return;
+    store(WIDTH_KEY, String(Math.round(drag.current.now)));
+    drag.current = null;
+  };
+  const reset = () => {
+    store(WIDTH_KEY, null);
+    setWidth(defaultWidth(narrow));
+  };
+  return (
+    <aside
+      ref={asideRef}
+      data-changes-panel
+      data-full={full ? 'true' : 'false'}
+      aria-label="Changes"
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && full) {
+          e.preventDefault();
+          e.stopPropagation();
+          onToggleFull();
+          return;
+        }
+        onKeyDown(e);
+      }}
+      style={full ? undefined : { width: shown }}
+      className={`relative flex min-h-0 flex-col bg-canvas outline-none ${full ? 'min-w-0 flex-1' : 'shrink-0 border-l border-line'}`}
+    >
+      {full ? null : (
+        // biome-ignore lint/a11y/noStaticElementInteractions: a pointer-only drag edge; Full view is the keyboard's way to more room
+        <div
+          data-changes-resize
+          title="Drag to resize; double-click for the default width"
+          className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize hover:bg-line-strong/60"
+          onPointerDown={onDragStart}
+          onPointerMove={onDragMove}
+          onPointerUp={onDragEnd}
+          onPointerCancel={onDragEnd}
+          onDoubleClick={reset}
+        />
+      )}
+      {children}
+    </aside>
+  );
+}
+
 /**
  * The Changes panel of a linked workspace (spec §21.5): one collapsible
  * section per repository, main first, each with its groups, PR badge and
@@ -570,12 +841,16 @@ function LinkedChangesPanel({
   projects,
   onClose,
   narrow,
+  full,
+  onToggleFull,
   focus,
 }: {
   workspace: Workspace;
   projects: Project[];
   onClose: () => void;
   narrow: boolean;
+  full: boolean;
+  onToggleFull: () => void;
   focus?: ChangesFocus | null;
 }) {
   const trpc = useTRPC();
@@ -613,7 +888,6 @@ function LinkedChangesPanel({
     group: ChangeGroup;
     path: string;
   } | null>(null);
-  const [split, setSplit] = useState(false);
   const rows = repos.flatMap((repo, i) =>
     collapsed[repo.projectId]
       ? []
@@ -671,18 +945,14 @@ function LinkedChangesPanel({
   };
 
   return (
-    <aside
-      data-changes-panel
-      aria-label="Changes"
-      onKeyDown={onKeyDown}
-      className={`flex min-h-0 shrink-0 flex-col border-l border-line bg-canvas ${narrow ? 'w-[300px]' : 'w-[380px]'}`}
-    >
+    <ChangesFrame narrow={narrow} full={full} onToggleFull={onToggleFull} onKeyDown={onKeyDown}>
       <div className="flex h-[34px] shrink-0 items-center gap-2 border-b border-line bg-surface pr-2 pl-3.5">
         <span className="text-md font-semibold">Changes</span>
         <span className="truncate text-xs text-fg-subtle">· {repos.length} repositories</span>
         <span className="flex-1" />
         <span className="font-mono text-xs font-medium text-diff-add">+{added}</span>
         <span className="font-mono text-xs font-medium text-diff-del">−{removed}</span>
+        <FullViewButton full={full} onToggle={onToggleFull} />
         <button
           type="button"
           className={iconButton}
@@ -796,12 +1066,14 @@ function LinkedChangesPanel({
         })}
       </div>
       {current ? (
-        <>
-          <div className="flex h-[30px] shrink-0 items-center gap-2 border-b border-line px-3.5">
+        <DiffPane
+          label={
             <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg-muted">
               {name(current.repo.projectId)} · {current.file.path}
             </span>
-            {current.file.kind !== 'D' ? (
+          }
+          openButton={
+            current.file.kind !== 'D' ? (
               <button
                 type="button"
                 data-open-diff
@@ -821,33 +1093,17 @@ function LinkedChangesPanel({
               >
                 Open in editor
               </button>
-            ) : null}
-            <button
-              type="button"
-              className={button('ghost', 'sm')}
-              aria-pressed={split}
-              title="Show the two versions side by side"
-              onClick={() => setSplit(!split)}
-            >
-              {split ? 'Split' : 'Unified'}
-            </button>
-          </div>
-          <div className="min-h-0 flex-1 bg-term">
-            {shown.current?.key.startsWith(keyOf(current)) ? (
-              <DiffView
-                diff={shown.current.diff}
-                path={current.file.path}
-                split={split}
-                cursorLine={cursorLine}
-              />
-            ) : null}
-          </div>
-        </>
+            ) : null
+          }
+          diff={shown.current?.key.startsWith(keyOf(current)) ? shown.current.diff : null}
+          path={current.file.path}
+          cursorLine={cursorLine}
+        />
       ) : (
         <div className="flex-1" />
       )}
       {editorOpen.dialog}
-    </aside>
+    </ChangesFrame>
   );
 }
 
@@ -868,12 +1124,17 @@ export function ChangesPanel({
   projects = [],
   onClose,
   narrow,
+  full,
+  onToggleFull,
   focus = null,
 }: {
   workspace: Workspace;
   projects?: Project[];
   onClose: () => void;
   narrow: boolean;
+  /** It fills the workspace area, the terminal hidden (⇧⌘M). */
+  full: boolean;
+  onToggleFull: () => void;
   focus?: ChangesFocus | null;
 }) {
   if (workspace.repos.length > 1) {
@@ -883,6 +1144,8 @@ export function ChangesPanel({
         projects={projects}
         onClose={onClose}
         narrow={narrow}
+        full={full}
+        onToggleFull={onToggleFull}
         focus={focus}
       />
     );
@@ -893,6 +1156,8 @@ export function ChangesPanel({
       projects={projects}
       onClose={onClose}
       narrow={narrow}
+      full={full}
+      onToggleFull={onToggleFull}
     />
   );
 }
@@ -902,11 +1167,15 @@ function SingleChangesPanel({
   projects,
   onClose,
   narrow,
+  full,
+  onToggleFull,
 }: {
   workspace: Workspace;
   projects: Project[];
   onClose: () => void;
   narrow: boolean;
+  full: boolean;
+  onToggleFull: () => void;
 }) {
   const trpc = useTRPC();
   const changes = useQuery(
@@ -916,7 +1185,6 @@ function SingleChangesPanel({
     ),
   );
   const [selected, setSelected] = useState<{ group: ChangeGroup; path: string } | null>(null);
-  const [split, setSplit] = useState(false);
   const data = changes.data;
   const rows: { group: ChangeGroup; file: ChangedFile }[] = [
     ...(data?.committed ?? []).map((file) => ({ group: 'committed' as const, file })),
@@ -979,12 +1247,7 @@ function SingleChangesPanel({
     ) : null;
 
   return (
-    <aside
-      data-changes-panel
-      aria-label="Changes"
-      onKeyDown={onKeyDown}
-      className={`flex min-h-0 shrink-0 flex-col border-l border-line bg-canvas ${narrow ? 'w-[300px]' : 'w-[380px]'}`}
-    >
+    <ChangesFrame narrow={narrow} full={full} onToggleFull={onToggleFull} onKeyDown={onKeyDown}>
       <div className="flex h-[34px] shrink-0 items-center gap-2 border-b border-line bg-surface pr-2 pl-3.5">
         <span className="text-md font-semibold">Changes</span>
         <span className="truncate font-mono text-xs text-fg-subtle">vs {data?.base ?? '…'}</span>
@@ -995,6 +1258,7 @@ function SingleChangesPanel({
             <span className="font-mono text-xs font-medium text-diff-del">−{data.removed}</span>
           </>
         ) : null}
+        <FullViewButton full={full} onToggle={onToggleFull} />
         <button
           type="button"
           className={iconButton}
@@ -1029,59 +1293,51 @@ function SingleChangesPanel({
             {group('committed', 'Committed', data?.committed ?? [])}
             {group('uncommitted', 'Uncommitted', data?.uncommitted ?? [])}
           </div>
-          <div className="flex h-[30px] shrink-0 items-center gap-2 border-b border-line px-3.5">
-            <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg-muted [direction:rtl]">
-              <bdi>{current?.file.path}</bdi>
-            </span>
-            {current && current.file.kind !== 'D' ? (
-              <button
-                type="button"
-                data-open-diff
-                className={button('ghost', 'sm')}
-                title="Open in editor, at the line of the cursor in the diff, else the first change"
-                onClick={() =>
-                  editorOpen.open(
-                    mainRepo,
-                    current.file,
-                    current.group,
-                    cursorLine.current ??
-                      (shown.current?.key.startsWith(`${current.group}:${current.file.path}:`)
-                        ? diffFirstLine(shown.current.diff)
-                        : null),
-                  )
-                }
-              >
-                Open in editor
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className={button('ghost', 'sm')}
-              aria-pressed={split}
-              title="Show the two versions side by side"
-              onClick={() => setSplit(!split)}
-            >
-              {split ? 'Split' : 'Unified'}
-            </button>
-          </div>
-          <div className="min-h-0 flex-1 bg-term">
-            {shown.current &&
-            current &&
-            shown.current.key.startsWith(`${current.group}:${current.file.path}:`) ? (
-              <DiffView
-                diff={shown.current.diff}
-                path={current.file.path}
-                split={split}
-                cursorLine={cursorLine}
-              />
-            ) : null}
-          </div>
+          <DiffPane
+            label={
+              <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg-muted [direction:rtl]">
+                <bdi>{current?.file.path}</bdi>
+              </span>
+            }
+            openButton={
+              current && current.file.kind !== 'D' ? (
+                <button
+                  type="button"
+                  data-open-diff
+                  className={button('ghost', 'sm')}
+                  title="Open in editor, at the line of the cursor in the diff, else the first change"
+                  onClick={() =>
+                    editorOpen.open(
+                      mainRepo,
+                      current.file,
+                      current.group,
+                      cursorLine.current ??
+                        (shown.current?.key.startsWith(`${current.group}:${current.file.path}:`)
+                          ? diffFirstLine(shown.current.diff)
+                          : null),
+                    )
+                  }
+                >
+                  Open in editor
+                </button>
+              ) : null
+            }
+            diff={
+              shown.current &&
+              current &&
+              shown.current.key.startsWith(`${current.group}:${current.file.path}:`)
+                ? shown.current.diff
+                : null
+            }
+            path={current?.file.path ?? ''}
+            cursorLine={cursorLine}
+          />
         </>
       ) : (
         <div className="flex-1" />
       )}
       <FinishControls workspace={workspace} />
       {editorOpen.dialog}
-    </aside>
+    </ChangesFrame>
   );
 }

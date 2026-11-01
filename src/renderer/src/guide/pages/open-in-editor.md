@@ -14,7 +14,7 @@ The choice is kept in {{app}}'s settings, never in a repository.
 
 ## Where you'll find it
 
-- **The workspace header:** **Open in editor** <kbd>{{key:openInEditor}}</kbd> opens the worktree. In a workspace across repositories it opens the primary one; see [Open all](#open-all).
+- **The workspace's tab bar:** **Open in editor** <kbd>{{key:openInEditor}}</kbd>, at its right next to **Changes**, opens the worktree. In a workspace across repositories it opens the primary one; see [Open all](#open-all).
 - **A repository chip's menu:** **Open in editor** for that repository, in its project's editor.
 - **The Changes panel:** **Open** on a file's row opens it at its first change; **Open in editor** above the diff, at the line you clicked in the diff. See [The Changes panel](finishing-work#the-changes-panel).
 - **The project view:** **Open in editor** <kbd>{{key:openInEditor}}</kbd> opens the main checkout.

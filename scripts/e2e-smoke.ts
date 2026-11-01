@@ -1791,9 +1791,13 @@ exec sleep 600
     fs.writeFileSync(path.join(shopTree, 'README'), 'hello\ncart\n');
     fs.writeFileSync(path.join(shopTree, 'cart.txt'), 'one\ntwo\n');
     await page.waitFor(`${changesCount} === '2'`, 'the count after a file change', 5000);
-    // Delete offers "Commit and push first", which opens the Changes panel.
-    await chooseFromNextContextMenu(mainProcess, 'Delete workspace…');
-    await clickLabel(page, 'Workspace menu');
+    // Delete offers "Commit and push first", which opens the Changes panel. The
+    // trash icon after the title opens the same confirmation as the ⋯ menu (spec §6.2).
+    assert.equal(
+      await page.eval(`document.querySelector('[data-delete-workspace]').title`),
+      'Delete workspace…',
+    );
+    await page.eval(`document.querySelector('[data-delete-workspace]').click()`);
     await page.waitFor(hasButton('Commit and push first'), 'Commit and push first', 30_000);
     await clickButtonText(page, 'Commit and push first');
     await page.waitFor(`!!document.querySelector('[data-changes-panel]')`, 'the Changes panel');
@@ -1824,6 +1828,103 @@ exec sleep 600
       `process.mainModule.require('electron').nativeTheme.themeSource = 'system'`,
     );
     await screenshot(page, screenshotDir, '12-changes-panel.png');
+    // The view buttons sit in the tab bar, not the header (spec §6.2); ⇧⌘D toggles Changes.
+    assert.equal(
+      await page.eval(
+        `['[data-open-editor]', '[data-changes-toggle]'].every((s) => !!document.querySelector('[data-view-buttons] ' + s) && !document.querySelector('header ' + s))`,
+      ),
+      true,
+    );
+    assert.equal(await page.eval(`!!document.querySelector('[data-header-separator]')`), true);
+    await pressShortcut(page, 'changes');
+    await page.waitFor(`!document.querySelector('[data-changes-panel]')`, '⇧⌘D closes Changes');
+    await pressShortcut(page, 'changes');
+    await page.waitFor(`!!document.querySelector('[data-diff-editor]')`, '⇧⌘D opens it again');
+    // A narrow window: the view buttons are icons, named in their tooltips.
+    const setWindowSize = (w: number, h: number) =>
+      mainProcess.eval(
+        `process.mainModule.require('electron').BrowserWindow.getAllWindows()[0].setSize(${w}, ${h})`,
+      );
+    await setWindowSize(860, 760);
+    await page.waitFor(
+      `!!document.querySelector('[data-view-buttons] [data-open-editor] svg') && !!document.querySelector('[data-view-buttons] [data-changes-toggle] svg')`,
+      'the icons in a narrow window',
+    );
+    assert.match(
+      await page.eval<string>(`document.querySelector('[data-open-editor]').title`),
+      process.platform === 'darwin' ? /in its editor \(⌘E\)/ : /in its editor \(Ctrl\+Shift\+E\)/,
+    );
+    await setWindowSize(1280, 800);
+    await page.waitFor(
+      `!document.querySelector('[data-view-buttons] [data-open-editor] svg')`,
+      'the labels again',
+    );
+
+    // Its width (spec §6.4): 380 px by default, its left edge drags it.
+    const changesWidth = `Math.round(document.querySelector('[data-changes-panel]').getBoundingClientRect().width)`;
+    await page.waitFor(`${changesWidth} === 380`, 'the default width');
+    const edge = await page.eval<{ x: number; y: number }>(
+      `(() => { const r = document.querySelector('[data-changes-resize]').getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()`,
+    );
+    const drag = (type: string, x: number) =>
+      page.send('Input.dispatchMouseEvent', {
+        type,
+        x,
+        y: edge.y,
+        button: 'left',
+        buttons: type === 'mouseReleased' ? 0 : 1,
+        clickCount: 1,
+      });
+    await drag('mousePressed', edge.x);
+    await drag('mouseMoved', edge.x - 70);
+    await drag('mouseMoved', edge.x - 140);
+    await drag('mouseReleased', edge.x - 140);
+    await page.waitFor(`${changesWidth} === 520`, 'the dragged width');
+    // Side by side doesn't fit in 520 px: unified, with the hint.
+    assert.equal(
+      await page.eval(
+        `document.querySelector('[data-diff-style="unified"]').getAttribute('aria-pressed')`,
+      ),
+      'true',
+    );
+    await page.eval(`document.querySelector('[data-diff-style="split"]').click()`);
+    await page.waitFor(`!!document.querySelector('[data-split-fallback]')`, 'the narrow fallback');
+    assert.match(
+      await page.eval<string>(`document.querySelector('[data-split-fallback]').textContent`),
+      /widen the panel or use Full view/,
+    );
+    const sideBySide = `!!document.querySelector('[data-diff-editor] .monaco-diff-editor.side-by-side')`;
+    assert.equal(await page.eval(sideBySide), false, 'unified while too narrow');
+    // Full view (⇧⌘M): the whole workspace area, the terminal hidden; side by side fits.
+    await pressShortcut(page, 'changesFullView');
+    await page.waitFor(
+      `document.querySelector('[data-changes-panel]').dataset.full === 'true' && !document.querySelector('[data-split-fallback]')`,
+      'full view',
+    );
+    await page.waitFor(sideBySide, 'the side-by-side diff', 20_000);
+    assert.equal(
+      await page.eval(`document.querySelector('[data-terminal]')?.offsetParent ?? null`),
+      null,
+      'the terminal hidden in full view',
+    );
+    // Esc returns, and the diff is unified again beside the terminal.
+    await pressKey(page, 'Escape');
+    await page.waitFor(
+      `document.querySelector('[data-changes-panel]').dataset.full === 'false' && !!document.querySelector('[data-split-fallback]')`,
+      'back beside the terminal',
+    );
+    await page.waitFor(`${changesWidth} === 520`, 'the same width');
+    // The button does the same, and reads Side panel meanwhile.
+    await page.eval(`document.querySelector('[data-changes-full]').click()`);
+    await page.waitFor(
+      `document.querySelector('[data-changes-full]').textContent === 'Side panel'`,
+      'full view from the button',
+    );
+    await page.eval(`document.querySelector('[data-changes-full]').click()`);
+    await page.waitFor(
+      `document.querySelector('[data-changes-panel]').dataset.full === 'false'`,
+      'the side panel from the button',
+    );
     const message = `document.querySelector('[aria-label="Commit message"]').value`;
     assert.equal(await page.eval(message), 'PROJ-7: Add cart');
     await clickButtonText(page, 'Ask Claude to write it');
@@ -3427,6 +3528,29 @@ exec sleep 600
       await assertExitedCleanly(running, 'quit after a restart');
     };
     const afterRestart = await restart('cartweb');
+    // The Changes panel's width and diff style lasted (spec §6.4), in the last workspace.
+    await afterRestart.running.page.eval(
+      `document.querySelector('[data-project="cartweb"] ~ button[title^="PROJ-10 Linked web"]').click()`,
+    );
+    await afterRestart.running.page.waitFor(
+      `!!document.querySelector('[data-changes-toggle]')`,
+      'the workspace',
+    );
+    await afterRestart.running.page.eval(`document.querySelector('[data-changes-toggle]').click()`);
+    await afterRestart.running.page.waitFor(
+      `Math.round(document.querySelector('[data-changes-panel]')?.getBoundingClientRect().width) === 520`,
+      'the width after a restart',
+    );
+    assert.equal(
+      await afterRestart.running.page.eval(`localStorage.getItem('changes-diff-style')`),
+      'split',
+      'the diff style after a restart',
+    );
+    await afterRestart.running.page.eval(`document.querySelector('[data-changes-toggle]').click()`);
+    await afterRestart.running.page.waitFor(
+      `!document.querySelector('[data-changes-panel]')`,
+      'Changes closed',
+    );
     await afterRestart.checks.toggle('shop');
     await afterRestart.running.page.waitFor(
       `(${afterRestart.checks.expandedJs}) === 'cartweb,shop'`,
