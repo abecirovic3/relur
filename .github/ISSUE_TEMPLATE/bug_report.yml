@@ -1,0 +1,69 @@
+name: Bug report
+description: Something doesn't work as the Guide or the spec describes.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please search existing issues first. Security problems go through private vulnerability reporting (see SECURITY.md), not here.
+        Leave out company names, internal hosts, repository names and anything else private from logs and screenshots.
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: The app menu's About (on Linux, Help › About).
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux x64 (AppImage)
+        - Linux x64 (.deb)
+        - Linux arm64 (AppImage)
+        - Linux arm64 (.deb)
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: For example macOS 15.4, or Ubuntu 24.04 with GNOME on Wayland.
+    validations:
+      required: true
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: The output of `claude --version`.
+      placeholder: "2.1.312 (Claude Code)"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a workspace in …
+        2. Click …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Error messages, logs or screenshots help.
+    validations:
+      required: true

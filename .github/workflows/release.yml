@@ -1,0 +1,100 @@
+# Builds the app on a version tag (v1.2.3) and publishes it as a GitHub
+# Release: a .zip and a .dmg for Apple Silicon and for Intel Macs, an AppImage
+# and a .deb for x64 and arm64 Linux, and one SHA256SUMS for all of them,
+# which install.sh checks. Names come from src/shared/brand.ts.
+#
+# Nothing runs until a tag is pushed:  git tag v0.1.0 && git push origin v0.1.0
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Use the tag as the app's version
+        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+
+      - name: Check
+        run: npm run check
+
+      - name: Build and package (arm64 and x64)
+        run: |
+          npm run build
+          npx tsx --tsconfig tsconfig.node.json scripts/package.ts --platform mac --arch all
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: |
+            dist/*-mac-*.zip
+            dist/*-mac-*.dmg
+          if-no-files-found: error
+
+  # node-pty is compiled for the machine it's built on, so each architecture
+  # builds on its own runner, in Debian 11 for an old enough glibc (spec §15.6).
+  linux:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the AppImage and .deb
+        run: VERSION="${GITHUB_REF_NAME#v}" scripts/linux-package.sh
+
+      - name: Try them on Ubuntu 24.04 (install.sh, self-test, sandbox, .deb)
+        run: SKIP_BUILD=1 scripts/linux-package-check.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/*-linux-*.AppImage
+            dist/*-linux-*.deb
+          if-no-files-found: error
+
+  release:
+    needs: [macos, linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: assets
+        run: sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            assets/*

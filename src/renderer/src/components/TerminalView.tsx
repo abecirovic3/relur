@@ -1,0 +1,304 @@
+import { matchShortcut } from '@shared/shortcuts';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
+import { type ITheme, Terminal } from '@xterm/xterm';
+import '@xterm/xterm/css/xterm.css';
+import type {
+  TerminalClientMessage,
+  TerminalMark,
+  TerminalServerMessage,
+} from '@shared/terminal-protocol';
+import { useEffect, useRef, useState } from 'react';
+import { ConversationAids, type NavigatorState } from '../terminal/conversation';
+import { openTerminalPort } from '../terminal/ports';
+import { mouseWheelHandler } from '../terminal/wheel';
+import { trpcClient } from '../trpc';
+import { keyHint } from '../ui/controls';
+import { tokenColor } from '../ui/theme';
+
+const isMac = navigator.userAgent.includes('Mac');
+
+// JetBrains Mono, bundled (styles/theme.css). xterm measures its cells when it
+// opens, so it must not open before the font has loaded.
+const FONT = '"JetBrains Mono", ui-monospace, monospace';
+const FONT_SIZE = 12.5;
+let fontsLoaded = false;
+const fontsReady = Promise.all([
+  document.fonts.load(`400 ${FONT_SIZE}px "JetBrains Mono"`),
+  document.fonts.load(`700 ${FONT_SIZE}px "JetBrains Mono"`),
+])
+  .catch(() => undefined)
+  .then(() => {
+    fontsLoaded = true;
+  });
+
+/** Terminal colors from the theme tokens; the ANSI palette stays xterm's own. */
+function xtermTheme(): ITheme {
+  const fg = tokenColor('--color-fg');
+  return {
+    background: tokenColor('--color-term'),
+    foreground: fg,
+    cursor: fg,
+    cursorAccent: tokenColor('--color-term'),
+    selectionBackground: tokenColor('--color-selected'),
+  };
+}
+
+function exitLine(message: Extract<TerminalServerMessage, { type: 'exit' }>): string {
+  const how = message.signal ? `signal ${message.signal}` : `code ${message.exitCode ?? '?'}`;
+  return `\r\n\x1b[2m[process exited with ${how}]\x1b[0m\r\n`;
+}
+
+/** Plain and OSC 8 links open in the browser through the main process (http and https only). */
+const openLink = (uri: string) => void trpcClient.shell.openExternal.mutate({ url: uri });
+
+export function TerminalView({
+  sessionId,
+  conversation,
+}: {
+  sessionId: string;
+  /** A workspace's Claude tab: prompt markers, navigator and Copy buttons (spec §6.8). */
+  conversation?: {
+    workspaceId: string;
+    onState?: (state: NavigatorState) => void;
+    /** The aids while the terminal is open, for the Responses panel's scroll to (spec §6.8). */
+    onAids?: (aids: ConversationAids | null) => void;
+  };
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const aidsRef = useRef<ConversationAids | null>(null);
+  const [nav, setNav] = useState<NavigatorState>({
+    count: 0,
+    current: 0,
+    alternate: false,
+  });
+  const workspaceId = conversation?.workspaceId ?? null;
+  // The workspace's view follows the navigator's state (spec §6.8).
+  const onState = conversation?.onState;
+  useEffect(() => onState?.(nav), [nav, onState]);
+  const onAids = conversation?.onAids;
+  const onAidsRef = useRef(onAids);
+  onAidsRef.current = onAids;
+  const [fontReady, setFontReady] = useState(fontsLoaded);
+  useEffect(() => {
+    if (!fontReady) void fontsReady.then(() => setFontReady(true));
+  }, [fontReady]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !fontReady) return;
+    const term = new Terminal({
+      fontFamily: FONT,
+      fontSize: FONT_SIZE,
+      fontWeight: 400,
+      fontWeightBold: 700,
+      // 12.5px text on 19px lines (theme.css --text-md).
+      lineHeight: 1.15,
+      scrollback: 10_000,
+      cursorBlink: true,
+      theme: xtermTheme(),
+      // Animates mouse-wheel notches over 125 ms, as VS Code does; trackpad
+      // scrolling is detected and never delayed.
+      smoothScrollDuration: 125,
+      // xterm's defaults: trackpads scroll pixel by pixel, Alt+wheel 5x faster.
+      scrollSensitivity: 1,
+      fastScrollSensitivity: 5,
+      // Decorations (the conversation aids, spec §6.8) are a proposed xterm API.
+      allowProposedApi: true,
+      // OSC 8 hyperlinks (Claude Code prints them). Without a handler xterm asks
+      // with confirm() and then calls window.open, which the app blocks.
+      linkHandler: { activate: (_event, uri) => openLink(uri), allowNonHttpProtocols: false },
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.loadAddon(new WebLinksAddon((_event, uri) => openLink(uri)));
+    term.open(container);
+    term.attachCustomWheelEventHandler(
+      mouseWheelHandler(term, () => container.querySelector('.xterm-screen')?.clientHeight ?? 0),
+    );
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl.dispose();
+        container.dataset.renderer = 'dom';
+      });
+      term.loadAddon(webgl);
+      container.dataset.renderer = 'webgl';
+    } catch {
+      // No WebGL (common in VMs): xterm keeps its DOM renderer.
+      container.dataset.renderer = 'dom';
+    }
+
+    // Clipboard goes through the main process; the renderer has no clipboard permission.
+    const copy = () => {
+      const text = term.getSelection();
+      if (text) void trpcClient.clipboard.writeText.mutate({ text });
+    };
+    const paste = async () => {
+      const text = await trpcClient.clipboard.readText.mutate();
+      if (text) term.paste(text);
+    };
+    // Copy and paste events come from the Edit menu (⌘C/⌘V on macOS).
+    const onCopy = (event: ClipboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      copy();
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void paste();
+    };
+    // Follow theme changes (<html data-theme>, set from nativeTheme).
+    const themeObserver = new MutationObserver(() => {
+      term.options.theme = xtermTheme();
+    });
+    themeObserver.observe(document.documentElement, { attributeFilter: ['data-theme'] });
+
+    container.addEventListener('copy', onCopy, true);
+    container.addEventListener('paste', onPaste, true);
+    // Ctrl+C and Ctrl+V belong to the shell on Linux and Windows; terminals use Ctrl+Shift.
+    const aids = workspaceId
+      ? new ConversationAids(term, {
+          copy: (text) => void trpcClient.clipboard.writeText.mutate({ text }),
+          change: setNav,
+        })
+      : null;
+    aidsRef.current = aids;
+    onAidsRef.current?.(aids);
+    // Scripted checks read the buffer and the aids' markers.
+    Object.assign(container, { xterm: term, aids });
+    // Marks apply where the output has got to, so they wait for earlier writes.
+    const addMark = (mark: TerminalMark) =>
+      term.write('', () => {
+        // A failing aid must never stop the terminal's output.
+        try {
+          aids?.add(mark);
+        } catch (error) {
+          console.warn('conversation aid', error);
+        }
+      });
+    term.attachCustomKeyEventHandler((event) => {
+      // Previous and next prompt (spec §6.8).
+      const prompt = matchShortcut('promptStep', event, isMac);
+      if (aids && prompt !== -1 && !aids.alternate) {
+        if (event.type === 'keydown') aids.step(prompt === 0 ? -1 : 1);
+        event.preventDefault();
+        return false;
+      }
+      // Copy and paste on Linux and Windows, where Ctrl+C and Ctrl+V belong to the terminal.
+      if (event.type !== 'keydown') return true;
+      if (matchShortcut('terminalCopy', event, isMac) !== -1) copy();
+      else if (matchShortcut('terminalPaste', event, isMac) !== -1) void paste();
+      else return true;
+      event.preventDefault();
+      return false;
+    });
+
+    let port: MessagePort | null = null;
+    let disposed = false;
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    const sendSize = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        void trpcClient.sessions.resize.mutate({ sessionId, cols: term.cols, rows: term.rows });
+      }, 50);
+    };
+    const fitToContainer = () => {
+      if (container.offsetWidth > 0 && container.offsetHeight > 0) fit.fit();
+    };
+    const observer = new ResizeObserver(fitToContainer);
+    observer.observe(container);
+    fitToContainer();
+    term.onResize(sendSize);
+    // Keystrokes before the port connects are queued, not dropped.
+    const queued: string[] = [];
+    const send = (data: string) =>
+      port?.postMessage({ type: 'input', data } satisfies TerminalClientMessage);
+    term.onData((data) => (port ? send(data) : queued.push(data)));
+
+    openTerminalPort(sessionId)
+      .then((opened) => {
+        if (disposed) {
+          opened.close();
+          return;
+        }
+        port = opened;
+        port.onmessage = (event: MessageEvent<TerminalServerMessage>) => {
+          const message = event.data;
+          if (message.type === 'exit') term.write(exitLine(message));
+          else if (message.type === 'mark') addMark(message.mark);
+          else if (message.type === 'replay' && message.marks?.length) {
+            // The replay in pieces, each mark after the output it followed.
+            let from = 0;
+            for (const { at, mark } of message.marks) {
+              term.write(message.data.slice(from, at));
+              addMark(mark);
+              from = at;
+            }
+            term.write(message.data.slice(from));
+          } else term.write(message.data);
+        };
+        port.start();
+        for (const data of queued.splice(0)) send(data);
+        container.dataset.connected = 'true';
+        sendSize();
+        term.focus();
+      })
+      .catch((error: unknown) => {
+        term.write(`\x1b[31m${error instanceof Error ? error.message : String(error)}\x1b[0m\r\n`);
+      });
+
+    return () => {
+      disposed = true;
+      clearTimeout(resizeTimer);
+      observer.disconnect();
+      themeObserver.disconnect();
+      container.removeEventListener('copy', onCopy, true);
+      container.removeEventListener('paste', onPaste, true);
+      port?.close();
+      aids?.dispose();
+      aidsRef.current = null;
+      onAidsRef.current?.(null);
+      term.dispose();
+    };
+  }, [sessionId, fontReady, workspaceId]);
+
+  return (
+    // The padding sits outside the terminal's own parent: the fit addon measures
+    // that parent's border-box width, padding included. Claude tabs keep a 36px
+    // gutter for prompt numbers (components.md).
+    <div className={`relative h-full w-full bg-term pt-2 ${workspaceId ? 'pl-9' : 'pl-3.5'}`}>
+      <div ref={containerRef} data-terminal={sessionId} className="h-full w-full" />
+      {nav.count > 0 && !nav.alternate ? (
+        <div
+          data-prompt-navigator
+          className="absolute top-2 right-4 z-10 flex h-6 items-center gap-1 rounded-full border border-line-strong bg-raised pr-1 pl-2.5 text-xs text-fg-muted shadow-overlay"
+        >
+          <span className="font-mono">
+            Prompt {Math.max(nav.current, 1)} of {nav.count}
+          </span>
+          <button
+            type="button"
+            title={`Previous prompt (${keyHint('promptStep', 0)})`}
+            className="size-5 rounded-full hover:bg-selected hover:text-fg"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => aidsRef.current?.step(-1)}
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            title={`Next prompt (${keyHint('promptStep', 1)})`}
+            className="size-5 rounded-full hover:bg-selected hover:text-fg"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => aidsRef.current?.step(1)}
+          >
+            ↓
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}

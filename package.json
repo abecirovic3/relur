@@ -1,0 +1,86 @@
+{
+  "name": "desktop-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop app for running parallel Claude Code sessions in git worktrees",
+  "license": "MIT",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "tsx scripts/build-helper.ts && electron-vite dev",
+    "build": "electron-vite build && tsx scripts/build-helper.ts",
+    "build:helper": "tsx scripts/build-helper.ts",
+    "start": "electron-vite preview",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "check:name": "tsx scripts/check-name.ts",
+    "gen:notices": "tsx scripts/gen-notices.ts",
+    "check:notices": "tsx scripts/gen-notices.ts --check",
+    "check": "npm run lint && npm run typecheck && npm test && npm run check:name && npm run check:notices",
+    "verify": "npm run check && npm run e2e",
+    "postinstall": "node scripts/postinstall.mjs",
+    "e2e": "npm run build && tsx --tsconfig tsconfig.node.json scripts/e2e-smoke.ts && tsx --tsconfig tsconfig.node.json scripts/e2e-onboarding.ts && tsx --tsconfig tsconfig.node.json scripts/e2e-quit.ts && tsx --tsconfig tsconfig.node.json scripts/e2e-smoke.ts --dev && tsx --tsconfig tsconfig.node.json scripts/e2e-onboarding.ts --dev && tsx --tsconfig tsconfig.node.json scripts/e2e-quit.ts --dev",
+    "package": "npm run build && tsx --tsconfig tsconfig.node.json scripts/package.ts",
+    "gen:install": "tsx --tsconfig tsconfig.node.json scripts/gen-install.ts",
+    "install-app": "sh scripts/install-app.sh"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.104.2",
+    "@trpc/client": "11.19.0",
+    "@trpc/server": "11.19.0",
+    "@trpc/tanstack-react-query": "11.19.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-web-links": "0.12.0",
+    "@xterm/addon-webgl": "0.19.0",
+    "@xterm/xterm": "6.0.0",
+    "better-sqlite3": "13.0.3",
+    "dompurify": "3.4.17",
+    "marked": "18.1.1",
+    "monaco-editor": "0.57.0",
+    "node-pty": "1.1.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "bun": "1.4.3",
+    "electron": "44.9.3",
+    "electron-builder": "26.17.0",
+    "electron-vite": "5.0.0",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vite": "7.3.7",
+    "vitest": "5.0.4"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "fsevents": false,
+    "better-sqlite3": false,
+    "bun@1.4.3": false,
+    "node-pty@1.1.0": true,
+    "electron-winstaller@5.4.0": false
+  },
+  "overrides": {
+    "dompurify": "3.4.17",
+    "@electron/get": {
+      "undici": "7.30.1"
+    },
+    "node-gyp": {
+      "undici": "6.29.1"
+    },
+    "ajv": {
+      "fast-uri": "3.1.9"
+    }
+  }
+}

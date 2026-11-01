@@ -1,0 +1,1055 @@
+import { BRAND } from '@shared/brand';
+import type { Profile, Project } from '@shared/schemas';
+import { accountFolder, setupPassed, setupWarning } from '@shared/setup';
+import { matchShortcut, type ShortcutId } from '@shared/shortcuts';
+import { needsYou, soundKey } from '@shared/status';
+import type { SessionInfo } from '@shared/terminal-protocol';
+import type { OtherWorktree, Workspace } from '@shared/workspaces';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSubscription } from '@trpc/tanstack-react-query';
+import { useEffect, useRef, useState } from 'react';
+import { AddProjectDialog } from './components/AddProjectDialog';
+import { AdoptWorktreeDialog } from './components/AdoptWorktreeDialog';
+import { CloseNotice } from './components/CloseNotice';
+import { ConfigError } from './components/ConfigError';
+import { DeleteWorkspaceDialog } from './components/DeleteWorkspaceDialog';
+import { APP_NOTICE_EVENT } from './components/EditorPicker';
+import { EditProfileDialog } from './components/EditProfileDialog';
+import { FirstLaunch } from './components/FirstLaunch';
+import { HomeView } from './components/HomeView';
+import { InstallCliDialog } from './components/InstallCliDialog';
+import { Modal, ModalFooter } from './components/Modal';
+import { NewProfileWizard } from './components/NewProfileWizard';
+import { NewWorkspaceDialog } from './components/NewWorkspaceDialog';
+import { ProfileTabs } from './components/ProfileTabs';
+import { ProjectView } from './components/ProjectView';
+import { QuitDialog } from './components/QuitDialog';
+import { RemoveProfileDialog } from './components/RemoveProfileDialog';
+import { RemoveProjectDialog } from './components/RemoveProjectDialog';
+import { SetupCheckPanel } from './components/SetupCheck';
+import { Sidebar } from './components/Sidebar';
+import { StatusBar } from './components/StatusBar';
+import { FOCUS_CLAUDE_EVENT, WorkspaceView } from './components/WorkspaceView';
+import { type GuideTarget, GuideView, target } from './guide/GuideView';
+import { GuideContext } from './guide/link';
+import { trpcClient, useTRPC } from './trpc';
+import { button, iconButton, isMac, Kbd } from './ui/controls';
+import { LaunchingContext } from './ui/launching';
+import { useProjectDisclosure } from './ui/project-disclosure';
+import { playAlert } from './ui/sounds';
+import { useNativeTheme } from './ui/theme';
+import {
+  type AfterSetup,
+  HOME,
+  PROJECT_TABS,
+  sessionsOf,
+  type View,
+  viewKey,
+  viewOf,
+  WORKSPACES_TAB,
+} from './view';
+
+const COLLAPSED_KEY = 'quick-actions-collapsed';
+
+/** Profile ids whose home overlay is collapsed; a per-viewer convenience. */
+function loadCollapsed(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+export function App() {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  useNativeTheme();
+  const info = useQuery(trpc.app.info.queryOptions());
+  const config = useQuery(trpc.config.get.queryOptions());
+  const sessions = useQuery(trpc.sessions.list.queryOptions());
+  const usage = useQuery(trpc.usage.all.queryOptions());
+  useSubscription(
+    trpc.usage.changes.subscriptionOptions(undefined, {
+      onData: () => void queryClient.invalidateQueries({ queryKey: trpc.usage.all.queryKey() }),
+    }),
+  );
+  const workspaces = useQuery(trpc.workspaces.list.queryOptions());
+  const [selectedProfile, setSelectedProfile] = useState<string | null>(null);
+  // What each profile shows, and the selected tab of each view (by profile and view key).
+  const [views, setViews] = useState<Record<string, View>>({});
+  const [selectedTab, setSelectedTab] = useState<Record<string, string>>({});
+  const disclosure = useProjectDisclosure();
+  const [overlayCollapsed, setOverlayCollapsed] = useState(loadCollapsed);
+  const [addingProject, setAddingProject] = useState(false);
+  const [removing, setRemoving] = useState<Project | null>(null);
+  const [homeNotice, setHomeNotice] = useState<string | null>(null);
+  // The Guide (components.md, Guide): replaces the sidebar and main area while open.
+  const [guide, setGuide] = useState<{
+    open: boolean;
+    at: GuideTarget;
+    linked: number;
+    from: string | null;
+  }>({ open: false, at: { page: 'what-it-is' }, linked: 0, from: null });
+  const guideOpen = guide.open;
+  const selectProfile = (id: string) => {
+    setGuide((g) => (g.open ? { ...g, open: false } : g));
+    setSelectedProfile(id);
+  };
+  const closeGuide = () => setGuide((g) => ({ ...g, open: false }));
+  // Reorders the profile tabs (and ⌘1…⌘9): config.json's list, spec §6.
+  const moveProfile = (profileId: string, index: number) =>
+    void trpcClient.profiles.move.mutate({ profileId, index });
+  // Workspaces whose Changes panel is open (spec §6.4); off by default.
+  const [changesOpen, setChangesOpen] = useState<Set<string>>(new Set());
+  const toggleChanges = (workspaceId: string, open?: boolean) =>
+    setChangesOpen((current) => {
+      const next = new Set(current);
+      if (open ?? !next.has(workspaceId)) next.add(workspaceId);
+      else next.delete(workspaceId);
+      return next;
+    });
+  // Something that happened and needs reading, such as a teardown that failed;
+  // `info` for news that isn't a problem, which goes away by itself.
+  // An `action` (such as Open as workspace) keeps it until used or dismissed.
+  const [appNotice, setAppNotice] = useState<{
+    text: string;
+    info?: boolean;
+    action?: { label: string; run: () => void };
+  } | null>(null);
+  // Messages from deeper down, such as an editor that didn't open (spec §6.13).
+  useEffect(() => {
+    const listener = (event: Event) =>
+      setAppNotice({ text: (event as CustomEvent<string>).detail });
+    window.addEventListener(APP_NOTICE_EVENT, listener);
+    return () => window.removeEventListener(APP_NOTICE_EVENT, listener);
+  }, []);
+  useEffect(() => {
+    if (!appNotice?.info || appNotice.action) return;
+    const timer = setTimeout(() => setAppNotice((n) => (n === appNotice ? null : n)), 10_000);
+    return () => clearTimeout(timer);
+  }, [appNotice]);
+  // Says why a workspace key did nothing (one workspace, nothing waiting).
+  const [keyNotice, setKeyNotice] = useState<string | null>(null);
+  const keyNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const showKeyNotice = (text: string) => {
+    setKeyNotice(text);
+    clearTimeout(keyNoticeTimer.current);
+    keyNoticeTimer.current = setTimeout(() => setKeyNotice(null), 2500);
+  };
+  const [creatingProfile, setCreatingProfile] = useState(false);
+  const [editingProfile, setEditingProfile] = useState<string | null>(null);
+  const [removingProfile, setRemovingProfile] = useState<string | null>(null);
+  const [installingCli, setInstallingCli] = useState(false);
+  const closeTabRef = useRef<() => void>(() => {});
+  const [closingClaude, setClosingClaude] = useState<SessionInfo | null>(null);
+  const closeSession = useMutation(trpc.sessions.close.mutationOptions());
+  // Quitting would interrupt these sessions (spec §5); null while not asking.
+  const [quitting, setQuitting] = useState<string[] | null>(null);
+  useSubscription(trpc.app.quitRequests.subscriptionOptions(undefined, { onData: setQuitting }));
+  // The window is closing for the first time ever and the app keeps running (spec §5).
+  const [closeNotice, setCloseNotice] = useState(false);
+  useSubscription(
+    trpc.app.closeNoticeRequests.subscriptionOptions(undefined, {
+      onData: () => setCloseNotice(true),
+    }),
+  );
+  useSubscription(
+    trpc.ui.menuRequests.subscriptionOptions(undefined, {
+      onData: (what) => {
+        if (what === 'install-cli') setInstallingCli(true);
+        if (what === 'close-tab') closeTabRef.current();
+        if (what === 'guide') openGuideRef.current(null);
+      },
+    }),
+  );
+
+  // Config changes (reload, app edits) can affect anything on screen.
+  useSubscription(
+    trpc.config.changes.subscriptionOptions(undefined, {
+      onData: () => void queryClient.invalidateQueries(),
+    }),
+  );
+  useSubscription(
+    trpc.sessions.changes.subscriptionOptions(undefined, {
+      onData: () => void queryClient.invalidateQueries({ queryKey: trpc.sessions.list.queryKey() }),
+    }),
+  );
+  // Alert sounds per profile and event, silenced by Do Not Disturb (spec §10.3).
+  const profilesRef = useRef<typeof profiles>([]);
+  useSubscription(
+    trpc.status.alerts.subscriptionOptions(undefined, {
+      onData: (alert) => {
+        const alerted = profilesRef.current.find((p) => p.id === alert.profileId);
+        const key = soundKey(alert.state);
+        if (alerted && key && alerted.alerts.sounds[key] && !alerted.alerts.doNotDisturb) {
+          playAlert(alert.state);
+        }
+      },
+    }),
+  );
+  // A clicked notification opens that workspace's Claude tab.
+  const openRequest = useRef<(workspaceId: string) => void>(() => {});
+  useSubscription(
+    trpc.status.openRequests.subscriptionOptions(undefined, {
+      onData: (workspaceId) => openRequest.current(workspaceId),
+    }),
+  );
+  useSubscription(
+    trpc.setup.changes.subscriptionOptions(undefined, {
+      onData: () => {
+        void queryClient.invalidateQueries({ queryKey: trpc.setup.all.pathKey() });
+        void queryClient.invalidateQueries({ queryKey: trpc.setup.get.pathKey() });
+      },
+    }),
+  );
+  useSubscription(
+    trpc.workspaces.changes.subscriptionOptions(undefined, {
+      onData: () =>
+        void queryClient.invalidateQueries({ queryKey: trpc.workspaces.list.queryKey() }),
+    }),
+  );
+  // Open as workspace for a worktree made outside the app (spec §13.6).
+  const [adopting, setAdopting] = useState<{ projectId: string; worktree: OtherWorktree } | null>(
+    null,
+  );
+  useSubscription(
+    trpc.workspaces.newWorktrees.subscriptionOptions(undefined, {
+      onData: (found) =>
+        setAppNotice({
+          text: `New worktree ${found.branch ?? found.path} in ${found.projectName}`,
+          info: true,
+          action: found.branch
+            ? {
+                label: 'Open as workspace',
+                run: () =>
+                  setAdopting({
+                    projectId: found.projectId,
+                    worktree: {
+                      path: found.path,
+                      branch: found.branch,
+                      taskId: null,
+                      title: '',
+                      titleFromField: false,
+                    },
+                  }),
+              }
+            : undefined,
+        }),
+    }),
+  );
+  // A repository linked with `<slug> link` (spec §21.9).
+  useSubscription(
+    trpc.workspaces.linkedFromCli.subscriptionOptions(undefined, {
+      onData: ({ byClaude, repoName, workspaceName }) =>
+        setAppNotice({
+          text: byClaude
+            ? `Claude linked ${repoName} to ${workspaceName}`
+            : `${repoName} was linked to ${workspaceName} from a terminal`,
+          info: true,
+        }),
+    }),
+  );
+
+  const currentConfig = config.data?.config ?? null;
+  const profiles = currentConfig?.profiles ?? [];
+  profilesRef.current = profiles;
+  // A new install opens the wizard by itself, once (spec §6.11).
+  const firstLaunchHandled = useRef(false);
+  useEffect(() => {
+    if (!currentConfig || firstLaunchHandled.current) return;
+    firstLaunchHandled.current = true;
+    if (currentConfig.profiles.length === 0) setCreatingProfile(true);
+  }, [currentConfig]);
+  // On launch, the first profile. TODO(M5): the last used one.
+  const profile = profiles.find((p) => p.id === selectedProfile) ?? profiles[0] ?? null;
+  const profileId = profile?.id ?? null;
+  const profileProjects = (currentConfig?.projects ?? []).filter((p) => p.profileId === profileId);
+  const profileWorkspaces = (workspaces.data ?? []).filter((w) => w.profileId === profileId);
+
+  // The profile's setup check (spec §6.11); until it passes, projects and Claude are gated.
+  // All profiles at once, so switching profiles never waits for a result.
+  const setupChecks = useQuery(trpc.setup.all.queryOptions());
+  const setupCheck = profileId ? (setupChecks.data?.[profileId] ?? null) : null;
+  const setupOk = setupPassed(setupCheck);
+
+  const chosen = (profileId && views[profileId]) || HOME;
+  // A removed project falls back to the home terminal, a deleted workspace to its project.
+  const project =
+    chosen.kind === 'home' || chosen.kind === 'setup'
+      ? null
+      : (currentConfig?.projects.find((p) => p.id === chosen.projectId) ?? null);
+  const workspace =
+    chosen.kind === 'workspace'
+      ? (profileWorkspaces.find((w) => w.id === chosen.workspaceId) ?? null)
+      : null;
+  const view: View =
+    chosen.kind === 'setup'
+      ? chosen
+      : !project
+        ? HOME
+        : chosen.kind === 'workspace' && !workspace
+          ? { kind: 'project', projectId: project.id }
+          : chosen;
+
+  const showView = (id: string, next: View, tab?: string) => {
+    selectProfile(id);
+    const shown = views[id];
+    setViews((current) => ({ ...current, [id]: next }));
+    // However a workspace is opened, its project expands in the sidebar (spec §6.1);
+    // switching its terminal tabs doesn't undo a collapse.
+    if (
+      next.kind === 'workspace' &&
+      (shown?.kind !== 'workspace' || shown.workspaceId !== next.workspaceId)
+    ) {
+      disclosure.opened(id, next.workspaceId, next.projectId);
+    }
+    if (tab) setSelectedTab((current) => ({ ...current, [`${id}/${viewKey(next)}`]: tab }));
+  };
+  // A linked repository's sessions carry its project (spec §21.1); the view is the workspace's.
+  const showSession = (session: SessionInfo) => {
+    const owner = session.workspaceId
+      ? workspaces.data?.find((w) => w.id === session.workspaceId)
+      : undefined;
+    const next: View = owner
+      ? { kind: 'workspace', projectId: owner.projectId, workspaceId: owner.id }
+      : viewOf(session);
+    showView(session.profileId, next, session.id);
+  };
+  // Adding or clicking a project lands on its Workspaces tab.
+  const openProject = (p: Project) =>
+    showView(p.profileId, { kind: 'project', projectId: p.id }, WORKSPACES_TAB);
+  const openWorkspace = (w: Workspace) => {
+    showView(w.profileId, { kind: 'workspace', projectId: w.projectId, workspaceId: w.id });
+    disclosure.opened(w.profileId, w.id, w.projectId);
+  };
+  openRequest.current = (workspaceId) => {
+    const target = workspaces.data?.find((w) => w.id === workspaceId);
+    if (!target) return;
+    disclosure.opened(target.profileId, target.id, target.projectId);
+    const claude = (sessions.data ?? []).find(
+      (s) => s.workspaceId === workspaceId && s.kind === 'claude',
+    );
+    if (claude) showSession(claude);
+    else openWorkspace(target);
+  };
+  const [newWorkspace, setNewWorkspace] = useState<{ project: Project | null } | null>(null);
+  const [deleting, setDeleting] = useState<Workspace | null>(null);
+  // Why Claude didn't start in a new workspace, by workspace id.
+  const [claudeNotices, setClaudeNotices] = useState<Record<string, string>>({});
+  // `then` is what was asked for; it opens once the check passes (spec §6.11).
+  const openSetup = (then?: AfterSetup) => {
+    if (profileId) showView(profileId, { kind: 'setup', then });
+  };
+  // New workspace and Start Claude here show the setup check until it passes.
+  const startNewWorkspace = (p: Project | null) => {
+    if (!setupOk) openSetup({ open: 'newWorkspace', from: view, projectId: p?.id ?? null });
+    else if (profileProjects.length > 0) setNewWorkspace({ project: p });
+  };
+  const workspaceShell = useMutation(
+    trpc.workspaces.shell.mutationOptions({ onSuccess: showSession }),
+  );
+
+  const projectShell = useMutation(
+    trpc.sessions.projectShell.mutationOptions({ onSuccess: showSession }),
+  );
+  const projectClaude = useMutation(
+    trpc.sessions.startClaudeInProject.mutationOptions({ onSuccess: showSession }),
+  );
+  const homeClaude = useMutation(
+    trpc.sessions.startClaudeInHome.mutationOptions({
+      onMutate: () => setHomeNotice(null),
+      onError: (error) => setHomeNotice(error.message),
+    }),
+  );
+  const startClaudeIn = (v: View) => {
+    if (v.kind === 'home' && profileId) homeClaude.mutate({ profileId });
+    else if (v.kind === 'project') projectClaude.mutate({ projectId: v.projectId });
+  };
+  // When the check passes, the gate lifts in place and the requested view opens (spec §6.11).
+  const afterSetup = setupOk && profileId && view.kind === 'setup' ? view.then : undefined;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per passed check
+  useEffect(() => {
+    if (!afterSetup || !profileId) return;
+    showView(profileId, afterSetup.from);
+    if (afterSetup.open === 'startClaude') startClaudeIn(afterSetup.from);
+    else {
+      const p = currentConfig?.projects.find((q) => q.id === afterSetup.projectId) ?? null;
+      setNewWorkspace({ project: p });
+    }
+  }, [afterSetup]);
+  // A refused Start Claude here explains itself for a few seconds.
+  useEffect(() => {
+    if (!homeNotice) return;
+    const timer = setTimeout(() => setHomeNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [homeNotice]);
+
+  const toggleOverlay = () => {
+    if (!profileId) return;
+    setOverlayCollapsed((current) => {
+      const next = { ...current, [profileId]: !current[profileId] };
+      try {
+        localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next));
+      } catch {
+        // remembered for this run only
+      }
+      return next;
+    });
+  };
+
+  // Workspaces whose Claude is launching show the spinner (spec §6.3).
+  const launching = new Set(
+    (sessions.data ?? []).flatMap((s) =>
+      s.kind === 'claude' && s.launching && s.workspaceId ? [s.workspaceId] : [],
+    ),
+  );
+  const ready =
+    info.isSuccess &&
+    config.isSuccess &&
+    sessions.isSuccess &&
+    workspaces.isSuccess &&
+    setupChecks.isSuccess;
+  const profileSessions = (sessions.data ?? []).filter((s) => s.profileId === profileId);
+  const viewSessions = sessionsOf(view, profileSessions);
+  const tabKey = `${profileId}/${viewKey(view)}`;
+  const projectTab =
+    viewSessions.some((s) => s.id === selectedTab[tabKey]) ||
+    PROJECT_TABS.includes(selectedTab[tabKey] ?? '')
+      ? (selectedTab[tabKey] as string)
+      : WORKSPACES_TAB;
+
+  // What this window shows: alerts skip a Claude tab visible in the focused
+  // window, and viewing a workspace clears its unread marker (spec §10.2, §10.3).
+  const visibleWorkspace = workspace?.id ?? null;
+  const shownSession =
+    viewSessions.find((s) => s.id === selectedTab[tabKey]) ?? viewSessions[0] ?? null;
+  const claudeTabShown = Boolean(workspace && shownSession?.kind === 'claude');
+  const setVisible = useMutation(trpc.status.setVisible.mutationOptions());
+  const markRead = useMutation(trpc.status.markRead.mutationOptions());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: report changes only
+  useEffect(() => {
+    setVisible.mutate({ workspaceId: visibleWorkspace, claudeTab: claudeTabShown });
+  }, [visibleWorkspace, claudeTabShown]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clear once per unread
+  useEffect(() => {
+    if (workspace?.unread) markRead.mutate({ workspaceId: workspace.id });
+  }, [workspace?.id, workspace?.unread]);
+
+  // When setup succeeds Claude starts (spec §8.3): the finished Setup tab
+  // makes way for it once; clicking Setup again later keeps it shown.
+  const leftSetup = useRef(new Set<string>());
+  const claudeAfterSetup = viewSessions.find((s) => s.kind === 'claude' && s.status === 'running');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per finished setup
+  useEffect(() => {
+    const setup = shownSession;
+    if (setup?.kind !== 'setup' || !setup.workspaceId || leftSetup.current.has(setup.id)) return;
+    if (setup.status !== 'exited' || setup.exitCode !== 0 || !claudeAfterSetup) return;
+    leftSetup.current.add(setup.id);
+    showSession(claudeAfterSetup);
+  }, [shownSession?.id, shownSession?.status, claudeAfterSetup?.id]);
+
+  // ⌘W closes the shown terminal tab; a running Claude asks first (components.md).
+  // The home terminal can't be closed from its tab (spec §6.7).
+  closeTabRef.current = () => {
+    if (document.querySelector('dialog[open]') || !shownSession || shownSession.kind === 'home') {
+      return;
+    }
+    if (shownSession.kind === 'claude' && shownSession.status === 'running') {
+      setClosingClaude(shownSession);
+    } else {
+      closeSession.mutate({ sessionId: shownSession.id });
+    }
+  };
+
+  // The theme reads the active profile's color name (theme.css: [data-profile-color]).
+  useEffect(() => {
+    if (profile) document.documentElement.dataset.profileColor = profile.color;
+    document.title = profile ? `${profile.name} — ${BRAND.displayName}` : BRAND.displayName;
+  }, [profile]);
+
+  // Window-wide shortcuts (components.md). Capturing runs before the terminal sees the key.
+  const onShortcut = useRef<(e: KeyboardEvent) => boolean>(() => false);
+  onShortcut.current = (e) => {
+    if (document.querySelector('dialog[open]')) return false;
+    const is = (id: ShortcutId) => matchShortcut(id, e, isMac);
+    // The Guide opens from anywhere, even before there is a profile.
+    if (is('guide') !== -1) {
+      openGuide(null);
+      return true;
+    }
+    if (!profile) return false;
+    const profileDigit = is('profile');
+    if (profileDigit !== -1) {
+      const target = profiles[profileDigit - 1];
+      if (target) selectProfile(target.id);
+      return true;
+    }
+    if (is('home') !== -1) {
+      selectProfile(profile.id);
+      showView(profile.id, HOME);
+      return true;
+    }
+    if (is('addProject') !== -1) {
+      setAddingProject(true);
+      return true;
+    }
+    if (is('newWorkspace') !== -1) {
+      startNewWorkspace(project);
+      return true;
+    }
+    // ⌘J: the next workspace that needs you, across profiles (spec §10.3).
+    if (is('nextNeedingYou') !== -1) {
+      const waiting = (workspaces.data ?? [])
+        .filter((w) => needsYou(w.state))
+        .sort((a, b) => (a.stateSince ?? '').localeCompare(b.stateSince ?? ''));
+      const current = waiting.findIndex((w) => w.id === workspace?.id);
+      const next = waiting[(current + 1) % Math.max(waiting.length, 1)];
+      if (!next) showKeyNotice('No workspace needs you');
+      else if (next.id === workspace?.id && shownSession?.kind === 'claude' && !guideOpen) {
+        showKeyNotice('Nothing else needs you');
+      } else openRequest.current(next.id);
+      return true;
+    }
+    // In the Guide, the keys below belong to the profile's views.
+    if (guideOpen) return false;
+    if (is('homePanel') !== -1) {
+      if (view.kind === 'home') toggleOverlay();
+      return view.kind === 'home';
+    }
+    if (is('startClaude') !== -1) {
+      if (view.kind === 'workspace' || view.kind === 'setup') return false;
+      if (!setupOk) openSetup({ open: 'startClaude', from: view });
+      else startClaudeIn(view);
+      return true;
+    }
+    if (is('newShell') !== -1) {
+      if (!setupOk) return false;
+      if (view.kind === 'project') {
+        projectShell.mutate({ projectId: view.projectId, reuse: false });
+      } else if (view.kind === 'workspace') {
+        workspaceShell.mutate({ workspaceId: view.workspaceId });
+      }
+      return view.kind === 'project' || view.kind === 'workspace';
+    }
+    // The workspace's Changes panel (spec §6.4).
+    if (is('changes') !== -1 && workspace) {
+      toggleChanges(workspace.id);
+      return true;
+    }
+    // Continue the workflow (spec §13.5), as the header's button; at a gate,
+    // which waits for a person's answer, it puts the Claude terminal in focus.
+    if (is('continueWorkflow') !== -1 && workspace?.workflow?.kind === 'gate') {
+      const claude = (sessions.data ?? []).find(
+        (s) => s.workspaceId === workspace.id && s.kind === 'claude',
+      );
+      if (claude) showSession(claude);
+      window.dispatchEvent(new CustomEvent(FOCUS_CLAUDE_EVENT, { detail: workspace.id }));
+      return true;
+    }
+    if (is('continueWorkflow') !== -1 && workspace?.workflow?.status) {
+      trpcClient.workflow.continue
+        .mutate({ workspaceId: workspace.id })
+        .catch((e: unknown) => showKeyNotice(e instanceof Error ? e.message : String(e)));
+      return true;
+    }
+    // Next and previous workspace of this profile, in sidebar order.
+    const workspaceStep = is('workspaceStep');
+    if (workspaceStep !== -1) {
+      const order = profileProjects.flatMap((p) =>
+        profileWorkspaces.filter((w) => w.projectId === p.id),
+      );
+      if (order.length === 0) {
+        showKeyNotice(`No workspaces in ${profile.name} yet`);
+        return true;
+      }
+      const at = order.findIndex((w) => w.id === workspace?.id);
+      if (at !== -1 && order.length === 1) {
+        showKeyNotice(`This is the only workspace in ${profile.name}`);
+        return true;
+      }
+      const step = workspaceStep === 1 ? 1 : -1;
+      const next =
+        order[
+          at === -1
+            ? step === 1
+              ? 0
+              : order.length - 1
+            : (at + step + order.length) % order.length
+        ];
+      if (next) openWorkspace(next);
+      return true;
+    }
+    // Cycle the view's terminal tabs.
+    const cycle = is('cycleTabs');
+    if (cycle !== -1 && viewSessions.length > 1) {
+      const at = viewSessions.findIndex((s) => s.id === shownSession?.id);
+      const step = cycle === 1 ? -1 : 1;
+      const next = viewSessions[(at + step + viewSessions.length) % viewSessions.length];
+      if (next) showSession(next);
+      return true;
+    }
+    // Terminal tabs by number (macOS; elsewhere Ctrl+digit is the profile shortcut).
+    const tabDigit = is('terminalTab');
+    if (tabDigit !== -1) {
+      const target = viewSessions[tabDigit - 1];
+      if (target) showSession(target);
+      return Boolean(target);
+    }
+    return false;
+  };
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => {
+      if (onShortcut.current(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener('keydown', listener, true);
+    return () => window.removeEventListener('keydown', listener, true);
+  }, []);
+
+  const location = workspace
+    ? `${project?.name} › ${workspace.task.id ?? workspace.branch}`
+    : project
+      ? project.repoPath
+      : profile
+        ? `~${profile.env.CLAUDE_CONFIG_DIR ? ` · ${profile.env.CLAUDE_CONFIG_DIR}` : ''}`
+        : '';
+
+  // Opens the Guide: at a page and section for a deep link (remembering where
+  // it came from, for Back), or where it was left.
+  const origin = guideOpen
+    ? guide.from
+    : view.kind === 'workspace' && workspace
+      ? workspace.name
+      : view.kind === 'project' && project
+        ? project.name
+        : view.kind === 'setup'
+          ? 'the setup check'
+          : profile
+            ? `${profile.name} Home`
+            : null;
+  const openGuide = (href: string | null) =>
+    setGuide((g) => {
+      if (!href) return { ...g, open: true, from: g.open ? g.from : null };
+      const at = target(href);
+      return { open: true, at, linked: at.section ? g.linked + 1 : g.linked, from: origin };
+    });
+  const openGuideRef = useRef(openGuide);
+  openGuideRef.current = openGuide;
+
+  return (
+    // data-app-ready marks a completed round trip to the main process (--self-test waits for it).
+    <LaunchingContext value={launching}>
+      <GuideContext value={openGuide}>
+        <div data-app-ready={ready || undefined} className="flex h-full flex-col bg-chrome text-fg">
+          <ProfileTabs
+            profiles={profiles}
+            activeId={guideOpen ? null : profileId}
+            attention={Object.fromEntries(
+              profiles.map((p) => [
+                p.id,
+                (workspaces.data ?? []).filter((w) => w.profileId === p.id && needsYou(w.state))
+                  .length,
+              ]),
+            )}
+            onSelect={selectProfile}
+            guideActive={guideOpen}
+            onGuide={() => openGuide(null)}
+            onNewProfile={currentConfig ? () => setCreatingProfile(true) : null}
+            onMove={moveProfile}
+            onContextMenu={async (p) => {
+              const refusal = await trpcClient.profiles.removalRefusal.query({ profileId: p.id });
+              const index = profiles.findIndex((other) => other.id === p.id);
+              const choice = await trpcClient.ui.contextMenu.mutate({
+                items: [
+                  { id: 'edit', label: 'Edit profile…' },
+                  { id: 'check', label: 'Check setup' },
+                  { id: 'left', label: 'Move Left', enabled: index > 0 },
+                  { id: 'right', label: 'Move Right', enabled: index < profiles.length - 1 },
+                  { id: 'remove', label: 'Remove profile…', enabled: refusal === null },
+                  ...(refusal ? [{ id: 'reason', label: refusal, enabled: false }] : []),
+                ],
+              });
+              if (choice === 'edit') setEditingProfile(p.id);
+              if (choice === 'remove') setRemovingProfile(p.id);
+              if (choice === 'left' || choice === 'right') {
+                moveProfile(p.id, index + (choice === 'left' ? -1 : 1));
+              }
+              if (choice === 'check') {
+                showView(p.id, { kind: 'setup' });
+                void trpcClient.setup.check.mutate({ profileId: p.id });
+              }
+            }}
+          />
+          {config.data?.error ? <ConfigError error={config.data.error} /> : null}
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            {guide.open ? (
+              <GuideView
+                at={guide.at}
+                linked={guide.linked}
+                from={guide.from}
+                onNavigate={(at, deep) =>
+                  setGuide((g) => ({ ...g, at, linked: deep ? g.linked + 1 : g.linked }))
+                }
+                onBack={guide.from ? closeGuide : null}
+              />
+            ) : (
+              <>
+                {currentConfig && profile ? (
+                  <Sidebar
+                    config={currentConfig}
+                    profile={profile}
+                    workspaces={profileWorkspaces}
+                    view={view}
+                    selectedWorkspaceId={workspace?.id ?? null}
+                    onShowView={(id, next) =>
+                      next.kind === 'project'
+                        ? showView(id, next, WORKSPACES_TAB)
+                        : showView(id, next)
+                    }
+                    onOpenWorkspace={openWorkspace}
+                    isExpanded={(p) => disclosure.isOpen(p.profileId, p.id)}
+                    onToggleProject={(p) => disclosure.toggle(p.profileId, p.id)}
+                    onAddProject={() => setAddingProject(true)}
+                    onRemoveProject={setRemoving}
+                    onNewWorkspace={startNewWorkspace}
+                    onDeleteWorkspace={setDeleting}
+                  />
+                ) : null}
+                <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-term">
+                  {appNotice ? (
+                    <div
+                      role={appNotice.info ? 'status' : 'alert'}
+                      data-app-notice
+                      className="flex shrink-0 items-start gap-3 border-b border-line bg-surface px-4 py-2 text-md"
+                    >
+                      {appNotice.info ? (
+                        <span className="text-fg-subtle">↗</span>
+                      ) : (
+                        <span className="text-st-permission">▲</span>
+                      )}
+                      <span className="min-w-0 flex-1 whitespace-pre-wrap select-text">
+                        {appNotice.text}
+                      </span>
+                      {appNotice.action ? (
+                        <button
+                          type="button"
+                          data-notice-action
+                          className={button('secondary', 'sm')}
+                          onClick={() => {
+                            appNotice.action?.run();
+                            setAppNotice(null);
+                          }}
+                        >
+                          {appNotice.action.label}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={iconButton}
+                        title="Dismiss"
+                        aria-label="Dismiss"
+                        onClick={() => setAppNotice(null)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : null}
+                  {profile && (view.kind === 'setup' || (!setupOk && project)) ? (
+                    <div className="min-h-0 flex-1 overflow-y-auto bg-canvas">
+                      <div className="mx-auto max-w-[680px] px-6 py-8">
+                        <SetupCheckPanel
+                          key={profile.id}
+                          profile={profile}
+                          header={
+                            view.kind === 'setup' && view.then
+                              ? {
+                                  title: `Finish setting up ${profile.name} to ${view.then.open === 'newWorkspace' ? 'open New workspace' : 'start Claude'}`,
+                                  subtitle: `It opens as soon as all three checks pass. The Home terminal of ${profile.name} still works.`,
+                                }
+                              : view.kind === 'setup' || !project
+                                ? {
+                                    title: `Set up ${profile.name}`,
+                                    subtitle: `Claude Code for ${profile.name} uses ${accountFolder(profile)}.`,
+                                  }
+                                : {
+                                    title: `Finish setting up ${profile.name} to open ${workspace ? (workspace.task.id ?? workspace.name) : project.name}`,
+                                    subtitle: `It opens as soon as all three checks pass. The Home terminal of ${profile.name} still works.`,
+                                  }
+                          }
+                        />
+                      </div>
+                    </div>
+                  ) : profile && workspace ? (
+                    <WorkspaceView
+                      key={tabKey}
+                      profile={profile}
+                      projects={(currentConfig?.projects ?? []).filter(
+                        (p) => p.profileId === profile.id,
+                      )}
+                      workspace={workspace}
+                      sessions={viewSessions}
+                      activeId={selectedTab[tabKey] ?? null}
+                      notice={claudeNotices[workspace.id] ?? workspaceShell.error?.message ?? null}
+                      onSelect={showSession}
+                      onDelete={() => setDeleting(workspace)}
+                      changesOpen={changesOpen.has(workspace.id)}
+                      onToggleChanges={() => toggleChanges(workspace.id)}
+                    />
+                  ) : profile && project ? (
+                    <ProjectView
+                      key={tabKey}
+                      profile={profile}
+                      project={project}
+                      workspaces={profileWorkspaces.filter((w) => w.projectId === project.id)}
+                      sessions={viewSessions}
+                      tab={projectTab}
+                      onSelectTab={(tab) => showView(profile.id, view, tab)}
+                      onSessionOpened={showSession}
+                      onNewWorkspace={() => startNewWorkspace(project)}
+                      onOpenWorkspace={openWorkspace}
+                      onRemove={() => setRemoving(project)}
+                      onAdopt={(worktree) => setAdopting({ projectId: project.id, worktree })}
+                      shortcutError={(projectShell.error ?? projectClaude.error)?.message ?? null}
+                    />
+                  ) : profile ? (
+                    <HomeView
+                      key={tabKey}
+                      profile={profile}
+                      session={viewSessions[0] ?? null}
+                      projects={profileProjects}
+                      workspaces={profileWorkspaces}
+                      collapsed={overlayCollapsed[profile.id] ?? false}
+                      onToggleCollapsed={toggleOverlay}
+                      onAddProject={() => setAddingProject(true)}
+                      onNewWorkspace={
+                        profileProjects.length > 0 ? () => startNewWorkspace(null) : null
+                      }
+                      onOpenWorkspace={openWorkspace}
+                      startClaude={{
+                        run: () =>
+                          setupOk
+                            ? homeClaude.mutate({ profileId: profile.id })
+                            : openSetup({ open: 'startClaude', from: view }),
+                        error: homeNotice,
+                        pending: homeClaude.isPending,
+                      }}
+                    />
+                  ) : currentConfig ? (
+                    <FirstLaunch onCreateProfile={() => setCreatingProfile(true)} />
+                  ) : null}
+                </main>
+              </>
+            )}
+          </div>
+          <StatusBar
+            profile={profile}
+            location={location}
+            setupWarning={setupWarning(setupCheck)}
+            onOpenSetup={() => openSetup()}
+            usage={{ snapshot: (profileId && usage.data?.[profileId]) || null, show: setupOk }}
+            notice={keyNotice}
+            workspaces={profileWorkspaces}
+          />
+
+          {editingProfile && profiles.some((p) => p.id === editingProfile) ? (
+            <EditProfileDialog
+              profile={profiles.find((p) => p.id === editingProfile) as (typeof profiles)[number]}
+              profiles={profiles}
+              onClose={() => setEditingProfile(null)}
+              onCheckSetup={() => {
+                setEditingProfile(null);
+                showView(editingProfile, { kind: 'setup' });
+                void trpcClient.setup.check.mutate({ profileId: editingProfile });
+              }}
+            />
+          ) : null}
+          {removingProfile && profiles.some((p) => p.id === removingProfile) ? (
+            <RemoveProfileDialog
+              profile={profiles.find((p) => p.id === removingProfile) as (typeof profiles)[number]}
+              onClose={() => setRemovingProfile(null)}
+            />
+          ) : null}
+          {installingCli ? <InstallCliDialog onClose={() => setInstallingCli(false)} /> : null}
+          {adopting ? (
+            <AdoptFor
+              adopting={adopting}
+              profiles={profiles}
+              projects={currentConfig?.projects ?? []}
+              onClose={() => setAdopting(null)}
+              onAdopted={(workspace) => {
+                setAdopting(null);
+                openWorkspace(workspace);
+              }}
+            />
+          ) : null}
+          {closingClaude ? (
+            <Modal
+              title="Close Claude?"
+              description="Closing the tab stops this Claude session. Its conversation can be resumed with Start Claude."
+              onClose={() => setClosingClaude(null)}
+            >
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  closeSession.mutate({ sessionId: closingClaude.id });
+                  setClosingClaude(null);
+                }}
+              >
+                <ModalFooter>
+                  {/* The dialog focuses this first button: Cancel. */}
+                  <button
+                    type="button"
+                    className={button('secondary', 'lg')}
+                    onClick={() => setClosingClaude(null)}
+                  >
+                    Cancel <Kbd>Esc</Kbd>
+                  </button>
+                  <button type="submit" className={button('danger', 'lg')}>
+                    Close Claude
+                  </button>
+                </ModalFooter>
+              </form>
+            </Modal>
+          ) : null}
+          {quitting ? (
+            <QuitDialog
+              sessionIds={quitting}
+              sessions={sessions.data ?? []}
+              workspaces={workspaces.data ?? []}
+              profiles={profiles}
+              onAnswer={(quit) => {
+                setQuitting(null);
+                void trpcClient.app.answerQuit.mutate({ quit });
+              }}
+            />
+          ) : null}
+          {closeNotice ? (
+            <CloseNotice
+              onAnswer={(close) => {
+                setCloseNotice(false);
+                void trpcClient.app.answerCloseNotice.mutate({ close });
+              }}
+            />
+          ) : null}
+          {creatingProfile && currentConfig ? (
+            <NewProfileWizard
+              profiles={profiles}
+              onClose={() => setCreatingProfile(false)}
+              onOpen={(created) => {
+                setCreatingProfile(false);
+                setSelectedProfile(created.id);
+              }}
+            />
+          ) : null}
+          {addingProject && profile ? (
+            <AddProjectDialog
+              profile={profile}
+              onClose={() => setAddingProject(false)}
+              onAdded={(added) => {
+                setAddingProject(false);
+                openProject(added);
+              }}
+            />
+          ) : null}
+          {newWorkspace && profile ? (
+            <NewWorkspaceDialog
+              profile={profile}
+              projects={profileProjects}
+              initialProject={newWorkspace.project}
+              onClose={() => setNewWorkspace(null)}
+              onCreated={({ workspace: created, claude, claudeError, setup }) => {
+                setNewWorkspace(null);
+                if (claudeError) setClaudeNotices((n) => ({ ...n, [created.id]: claudeError }));
+                // Setup first: its tab shows until Claude starts (spec §8.3).
+                if (setup) showSession(setup);
+                else if (claude) showSession(claude);
+                else openWorkspace(created);
+              }}
+            />
+          ) : null}
+          {deleting ? (
+            <DeleteWorkspaceDialog
+              workspace={deleting}
+              projects={currentConfig?.projects ?? []}
+              remote={
+                currentConfig?.projects.find((p) => p.id === deleting.projectId)?.remote ?? null
+              }
+              onClose={() => setDeleting(null)}
+              onCommitFirst={() => {
+                toggleChanges(deleting.id, true);
+                setDeleting(null);
+              }}
+              onDeleted={({ teardown }) => {
+                setDeleting(null);
+                if (teardown && !teardown.ok) {
+                  setAppNotice({
+                    text: `${deleting.name} was deleted, but its teardown didn't finish: ${teardown.message}.${teardown.output ? `\n${teardown.output}` : ''}`,
+                  });
+                }
+              }}
+            />
+          ) : null}
+          {removing && profile ? (
+            <RemoveProjectDialog
+              projects={currentConfig?.projects ?? []}
+              project={removing}
+              profile={profile}
+              onClose={() => setRemoving(null)}
+              onRemoved={({ teardownFailures }) => {
+                setRemoving(null);
+                if (teardownFailures.length > 0) {
+                  setAppNotice({
+                    text: `${removing.name} was removed, but teardown didn't finish for ${teardownFailures.join('; ')}.`,
+                  });
+                }
+              }}
+            />
+          ) : null}
+        </div>
+      </GuideContext>
+    </LaunchingContext>
+  );
+}
+
+/**
+ * Open as workspace (spec §13.6) for a worktree from the project view or the
+ * notice; the notice's worktree is prefilled here from the project's list.
+ */
+function AdoptFor({
+  adopting,
+  profiles,
+  projects,
+  onClose,
+  onAdopted,
+}: {
+  adopting: { projectId: string; worktree: OtherWorktree };
+  profiles: Profile[];
+  projects: Project[];
+  onClose: () => void;
+  onAdopted: (workspace: Workspace) => void;
+}) {
+  const trpc = useTRPC();
+  const others = useQuery(
+    trpc.workspaces.otherWorktrees.queryOptions(
+      { projectId: adopting.projectId },
+      { staleTime: 0 },
+    ),
+  );
+  const project = projects.find((p) => p.id === adopting.projectId);
+  const profile = profiles.find((p) => p.id === project?.profileId);
+  if (!project || !profile) return null;
+  const listed = others.data?.find((w) => w.path === adopting.worktree.path);
+  // The notice has no prefill: wait for a fresh list, which has it.
+  if (!listed && adopting.worktree.title === '' && !others.isFetchedAfterMount) return null;
+  return (
+    <AdoptWorktreeDialog
+      profile={profile}
+      project={project}
+      worktree={listed ?? adopting.worktree}
+      onClose={onClose}
+      onAdopted={onAdopted}
+    />
+  );
+}

@@ -1,0 +1,254 @@
+import fs from 'node:fs';
+
+/** One assistant response: everything Claude wrote after a prompt (spec §6.8). */
+export interface TranscriptResponse {
+  text: string;
+  /** When its last part was written (ISO), if the transcript says. */
+  at: string | null;
+  /** The prompt it answers, as typed; null when the transcript doesn't have it. */
+  prompt: string | null;
+  /** It follows background work handing back to Claude, not a prompt (spec §6.8). */
+  afterBackground: boolean;
+}
+
+const record = (v: unknown): Record<string, unknown> | null =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+
+/**
+ * Whether a prompt is Claude Code handing background work back to Claude (a
+ * command's `<task-notification>`, an agent's `<agent-message>`), which
+ * starts a turn the user didn't type (spec §6.8, §10.2).
+ */
+export const isBackgroundHandBack = (text: string | null | undefined): boolean =>
+  typeof text === 'string' && /^\s*<(task-notification|agent-message)[\s>]/.test(text);
+
+/** Whether a user entry is such a hand-back: by its origin, else by its text. */
+function isHandBack(entry: Record<string, unknown>): boolean {
+  const kind = record(entry.origin)?.kind;
+  if (kind === 'task-notification' || kind === 'agent-message') return true;
+  const content = record(entry.message)?.content;
+  if (typeof content === 'string') return isBackgroundHandBack(content);
+  if (!Array.isArray(content)) return false;
+  const first = content.map(record).find((p) => p?.type === 'text');
+  return isBackgroundHandBack(typeof first?.text === 'string' ? first.text : null);
+}
+
+/** Whether a user entry is a prompt the user typed (not a tool result or app note). */
+function isPrompt(entry: Record<string, unknown>): boolean {
+  return promptText(entry) !== null;
+}
+
+/** The text of a prompt the user typed; null for a tool result or app note. */
+function promptText(entry: Record<string, unknown>): string | null {
+  if (entry.isMeta === true) return null;
+  const content = record(entry.message)?.content;
+  if (typeof content === 'string') return content.startsWith('<') ? null : content;
+  if (!Array.isArray(content)) return null;
+  const parts = content
+    .map((part) => {
+      const p = record(part);
+      return p?.type === 'text' && typeof p.text === 'string' && !p.text.startsWith('<')
+        ? p.text
+        : null;
+    })
+    .filter((t) => t !== null);
+  return parts.length > 0 ? parts.join('\n\n') : null;
+}
+
+function assistantText(entry: Record<string, unknown>): string {
+  const content = record(entry.message)?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      const p = record(part);
+      return p?.type === 'text' && typeof p.text === 'string' ? p.text : '';
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/**
+ * The responses of a session transcript (JSON lines written by Claude Code),
+ * oldest first: per prompt, the text of the assistant messages that follow,
+ * without tool calls. Read-only (decision D12); a missing or unreadable file
+ * gives none.
+ */
+export function readResponses(file: string): TranscriptResponse[] {
+  let text: string;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  const responses: TranscriptResponse[] = [];
+  let current: {
+    parts: string[];
+    at: string | null;
+    prompt: string | null;
+    afterBackground: boolean;
+  } | null = null;
+  const close = () => {
+    if (current && current.parts.length > 0) {
+      responses.push({
+        text: current.parts.join('\n\n'),
+        at: current.at,
+        prompt: current.prompt,
+        afterBackground: current.afterBackground,
+      });
+    }
+    current = null;
+  };
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let entry: Record<string, unknown> | null;
+    try {
+      entry = record(JSON.parse(line));
+    } catch {
+      continue;
+    }
+    if (!entry) continue;
+    const prompt = entry.type === 'user' ? promptText(entry) : null;
+    if (prompt !== null) {
+      close();
+      current = { parts: [], at: null, prompt: prompt.trim(), afterBackground: false };
+    } else if (entry.type === 'user' && isHandBack(entry)) {
+      // Claude's turn after its background work handed back: a response of its own.
+      close();
+      current = { parts: [], at: null, prompt: null, afterBackground: true };
+    } else if (entry.type === 'assistant') {
+      const part = assistantText(entry).trim();
+      current ??= { parts: [], at: null, prompt: null, afterBackground: false };
+      if (part) current.parts.push(part);
+      if (typeof entry.timestamp === 'string') current.at = entry.timestamp;
+    }
+  }
+  close();
+  return responses;
+}
+
+/**
+ * The text of the transcript's last response once it is written: Claude Code
+ * runs the Stop hook before it writes the response to the transcript, so this
+ * waits (up to `timeoutMs`) until the response after the last prompt ends with
+ * `last`, the hook's last assistant message. Without `last`, until the last
+ * response has text. Null if it doesn't get there (a turn without text).
+ */
+export async function awaitLastResponse(
+  file: string,
+  last: string | null,
+  timeoutMs = 5000,
+): Promise<string | null> {
+  const wanted = last?.trim() || null;
+  for (const end = Date.now() + timeoutMs; ; ) {
+    const text = lastTurnText(file);
+    if (text && (!wanted || text.endsWith(wanted))) return text;
+    if (Date.now() >= end) return wanted;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/**
+ * The text of the response to the last prompt or background hand-back, or
+ * null when it has none (yet).
+ */
+function lastTurnText(file: string): string | null {
+  let text: string;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+  const parts: string[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let entry: Record<string, unknown> | null;
+    try {
+      entry = record(JSON.parse(line));
+    } catch {
+      continue;
+    }
+    if (entry?.type === 'user' && (isPrompt(entry) || isHandBack(entry))) parts.length = 0;
+    else if (entry?.type === 'assistant') {
+      const part = assistantText(entry).trim();
+      if (part) parts.push(part);
+    }
+  }
+  return parts.length > 0 ? parts.join('\n\n') : null;
+}
+
+/** The note Claude Code writes after a permission prompt is answered No (or Esc). */
+const DENIED_NOTE = '[Request interrupted by user for tool use]';
+
+/**
+ * Whether the session's last exchange ended with a permission request the
+ * user turned down (spec §10.2): Claude Code then waits for input without a
+ * hook event, and the transcript's last user entry is its interrupt note.
+ * Reads the file's tail only; a missing or unreadable file says no.
+ */
+export function endsWithDeniedPermission(file: string): boolean {
+  let text: string;
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const length = Math.min(size, 256 * 1024);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, size - length);
+      text = buffer.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let entry: Record<string, unknown> | null;
+    try {
+      entry = record(JSON.parse(lines[i] as string));
+    } catch {
+      continue;
+    }
+    if (entry?.type === 'assistant') return false;
+    if (entry?.type !== 'user') continue;
+    const content = record(entry.message)?.content;
+    if (typeof content === 'string') return content.trim() === DENIED_NOTE;
+    if (!Array.isArray(content)) return false;
+    return content.some((part) => {
+      const p = record(part);
+      return p?.type === 'text' && typeof p.text === 'string' && p.text.trim() === DENIED_NOTE;
+    });
+  }
+  return false;
+}
+
+/**
+ * Calls `onChange` when the transcript changes: the file `path()` names (it
+ * changes with /clear or a resume) or its size or time. Checks every
+ * `intervalMs`; returns the function that stops it.
+ */
+export function watchTranscript(
+  path: () => string | null,
+  onChange: () => void,
+  intervalMs = 1000,
+): () => void {
+  const signature = () => {
+    const file = path();
+    if (!file) return '';
+    try {
+      const stat = fs.statSync(file);
+      return `${file}:${stat.size}:${stat.mtimeMs}`;
+    } catch {
+      return `${file}:-`;
+    }
+  };
+  let last = signature();
+  const timer = setInterval(() => {
+    const now = signature();
+    if (now === last) return;
+    last = now;
+    onChange();
+  }, intervalMs);
+  return () => clearInterval(timer);
+}

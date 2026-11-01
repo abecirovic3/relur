@@ -1,0 +1,452 @@
+import type { Project } from '@shared/schemas';
+import type { RepoDeleteCheck, Workspace } from '@shared/workspaces';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { GuideLink } from '../guide/link';
+import { useTRPC } from '../trpc';
+import { button, Kbd } from '../ui/controls';
+import { Modal, ModalFooter } from './Modal';
+
+export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+export function Warning({ title, children }: { title: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex gap-2.5 px-3 py-2.5">
+      <span className="mt-[3px] inline-block h-[10px] w-[11px] shrink-0 bg-st-permission [clip-path:polygon(50%_0,100%_100%,0_100%)]" />
+      <div className="min-w-0">
+        <div className="font-semibold text-fg">{title}</div>
+        {children ? (
+          <div className="mt-0.5 font-mono text-xs break-words text-fg-muted select-text">
+            {children}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** The "primary" tag of a linked workspace's main repository (components.md). */
+export function PrimaryTag() {
+  return (
+    <span
+      title="Claude starts here"
+      className="rounded-xs border border-line-strong bg-raised px-1 text-2xs text-fg-muted"
+    >
+      primary
+    </span>
+  );
+}
+
+/**
+ * One repository's card in Delete workspace, Unlink and Remove project
+ * (spec §21.6): its warnings, or that it is clean, and its own "Also delete
+ * the local branch" when it has unpushed commits.
+ */
+export function RepoCard({
+  name,
+  check,
+  branch,
+  remote,
+  alsoDeleteBranch,
+  onAlsoDeleteBranch,
+}: {
+  name: string;
+  check: RepoDeleteCheck;
+  branch: string;
+  remote: string | null;
+  alsoDeleteBranch: boolean;
+  onAlsoDeleteBranch: (value: boolean) => void;
+}) {
+  const shown = check.uncommitted.slice(0, 6);
+  const clean = check.uncommitted.length === 0 && check.unpushed === 0 && !check.prOpen;
+  return (
+    <div
+      data-repo-card={check.projectId}
+      className="overflow-hidden rounded-lg border border-line-strong"
+    >
+      <div className="flex h-8 items-center gap-2 border-b border-line bg-surface px-3">
+        <span className="font-mono text-sm font-medium">{name}</span>
+        {check.primary ? <PrimaryTag /> : null}
+        <span
+          className="min-w-0 flex-1 truncate text-right font-mono text-xs text-fg-subtle"
+          title={check.worktreePath}
+        >
+          {check.worktreePath}
+        </span>
+      </div>
+      {clean ? (
+        <p className="px-3 py-2 text-sm text-fg-muted">
+          <span className="text-diff-add">✓</span> No uncommitted changes or unpushed commits
+        </p>
+      ) : (
+        <div className="divide-y divide-st-permission/30 bg-st-permission/8">
+          {check.uncommitted.length > 0 ? (
+            <Warning title={plural(check.uncommitted.length, 'uncommitted change')}>
+              {shown.join(' · ')}
+              {check.uncommitted.length > shown.length
+                ? ` · ${check.uncommitted.length - shown.length} more`
+                : ''}
+            </Warning>
+          ) : null}
+          {check.unpushed > 0 ? (
+            <Warning title={`${plural(check.unpushed, 'commit')} not pushed`}>
+              {remote
+                ? `${branch} has commits that aren't on ${remote}`
+                : `${branch} has commits that aren't on any other branch`}
+            </Warning>
+          ) : null}
+          {check.prOpen ? <Warning title="Its pull request isn't merged" /> : null}
+        </div>
+      )}
+      {check.unpushed > 0 ? (
+        <label className="flex items-center gap-2 border-t border-line px-3 py-2 text-md text-fg">
+          <input
+            type="checkbox"
+            className="size-3.5 accent-fg"
+            checked={alsoDeleteBranch}
+            onChange={(e) => onAlsoDeleteBranch(e.target.checked)}
+          />
+          Also delete the local branch <span className="font-mono">{branch}</span>
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
+/** What deleting one repository's worktree does, from its check and the user's choices. */
+export const repoChoice = (
+  check: RepoDeleteCheck,
+  alsoDeleteBranch: boolean,
+  refused: boolean,
+) => ({
+  projectId: check.projectId,
+  force: check.uncommitted.length > 0 || refused,
+  deleteBranch: check.unpushed === 0 || alsoDeleteBranch,
+});
+
+/**
+ * Unlink <repo> (spec §21.4): that repository's card as in Delete, Cancel
+ * focused, then its worktree goes and Claude restarts without it.
+ */
+export function UnlinkDialog({
+  workspace,
+  project,
+  mainName,
+  onClose,
+  onDone,
+}: {
+  workspace: Workspace;
+  project: Project;
+  mainName: string;
+  onClose: () => void;
+  onDone: (result: { teardown: { ok: boolean; message: string; output: string } | null }) => void;
+}) {
+  const trpc = useTRPC();
+  const check = useQuery(
+    trpc.workspaces.unlinkCheck.queryOptions(
+      { workspaceId: workspace.id, projectId: project.id },
+      { staleTime: 0 },
+    ),
+  );
+  const unlink = useMutation(trpc.workspaces.unlink.mutationOptions({ onSuccess: onDone }));
+  const [refused, setRefused] = useState(false);
+  const [alsoDeleteBranch, setAlsoDeleteBranch] = useState(false);
+  const data = check.data;
+  return (
+    <Modal
+      title={`Unlink ${project.name} from ${workspace.task.id ?? workspace.name}?`}
+      description={`Deletes its worktree and closes its Setup and Shell tabs. Claude restarts in ${mainName} without it; the conversation continues.`}
+      onClose={onClose}
+    >
+      <form
+        className="text-md"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!data) return;
+          unlink.mutate(
+            { workspaceId: workspace.id, ...repoChoice(data, alsoDeleteBranch, refused) },
+            { onError: () => setRefused(true) },
+          );
+        }}
+      >
+        {check.isPending ? <p className="text-sm text-fg-subtle">Checking the worktree…</p> : null}
+        {data ? (
+          <RepoCard
+            name={project.name}
+            check={data}
+            branch={workspace.branch}
+            remote={project.remote}
+            alsoDeleteBranch={alsoDeleteBranch}
+            onAlsoDeleteBranch={setAlsoDeleteBranch}
+          />
+        ) : null}
+        {(check.error ?? unlink.error) ? (
+          <p role="alert" className="mt-3 text-sm text-st-error select-text">
+            ✕ {(check.error ?? unlink.error)?.message}
+          </p>
+        ) : null}
+        <ModalFooter>
+          <button
+            type="button"
+            data-autofocus
+            className={button('secondary', 'lg')}
+            onClick={onClose}
+          >
+            Cancel <Kbd>Esc</Kbd>
+          </button>
+          <button
+            type="submit"
+            className={button('danger', 'lg')}
+            disabled={!data || unlink.isPending}
+          >
+            {unlink.isPending ? 'Unlinking…' : `Unlink ${project.name}`}
+          </button>
+        </ModalFooter>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Delete workspace (spec §14.2): lists what would be lost or interrupted,
+ * with Cancel focused first. `--force` is used for the worktree only after
+ * "Delete anyway". The local branch is deleted with it unless it has unpushed
+ * commits; then an unchecked "Also delete the local branch" keeps them unless
+ * ticked. The remote branch is never touched. A linked workspace shows one
+ * card per repository, each with its own branch checkbox (§21.6).
+ */
+export function DeleteWorkspaceDialog({
+  workspace,
+  remote,
+  projects = [],
+  onClose,
+  onDeleted,
+  onCommitFirst,
+}: {
+  workspace: Workspace;
+  remote: string | null;
+  /** The profile's projects, for a linked workspace's repository names and remotes. */
+  projects?: Project[];
+  onClose: () => void;
+  /** "Commit and push first": opens the Changes panel instead (spec §14.2, M4). */
+  onCommitFirst: () => void;
+  onDeleted: (result: {
+    teardown: { ok: boolean; message: string; output: string } | null;
+  }) => void;
+}) {
+  const trpc = useTRPC();
+  const check = useQuery(
+    trpc.workspaces.deleteCheck.queryOptions({ workspaceId: workspace.id }, { staleTime: 0 }),
+  );
+  const remove = useMutation(trpc.workspaces.delete.mutationOptions({ onSuccess: onDeleted }));
+  // A plain delete that git refused (e.g. a locked worktree) can be forced after confirming.
+  const [refused, setRefused] = useState(false);
+  const [alsoDeleteBranch, setAlsoDeleteBranch] = useState(false);
+  const data = check.data;
+  const warnings = data
+    ? data.uncommitted.length > 0 || data.unpushed > 0 || data.running > 0 || data.prOpen
+    : false;
+  const force = (data?.uncommitted.length ?? 0) > 0 || refused;
+  const danger = warnings || refused;
+  const hasUnpushed = (data?.unpushed ?? 0) > 0;
+  const deleteBranch = !hasUnpushed || alsoDeleteBranch;
+
+  const changes = data?.uncommitted ?? [];
+  const shown = changes.slice(0, 8);
+  const linked = workspace.repos.length > 1;
+  const [alsoDeleteBranches, setAlsoDeleteBranches] = useState<Record<string, boolean>>({});
+  const repoName = (id: string) => projects.find((p) => p.id === id)?.name ?? id;
+  const repoRemote = (id: string) => projects.find((p) => p.id === id)?.remote ?? null;
+  const dirty = (data?.repos ?? []).some((r) => r.uncommitted.length > 0 || r.unpushed > 0);
+  const linkedDanger =
+    (data?.repos ?? []).some((r) => r.uncommitted.length > 0 || r.unpushed > 0 || r.prOpen) ||
+    (data?.running ?? 0) > 0 ||
+    refused;
+
+  if (linked) {
+    return (
+      <Modal
+        title={`Delete ${workspace.name}?`}
+        description={`Removes its ${workspace.repos.length} worktrees and ends its terminals.${
+          remote ? ' Branches on the remotes are kept.' : ''
+        }`}
+        onClose={onClose}
+      >
+        <form
+          className="space-y-2.5 text-md"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!data) return;
+            remove.mutate(
+              {
+                workspaceId: workspace.id,
+                force: refused,
+                deleteBranch: false,
+                repos: data.repos.map((r) =>
+                  repoChoice(r, alsoDeleteBranches[r.projectId] ?? false, refused),
+                ),
+              },
+              { onError: () => setRefused(true) },
+            );
+          }}
+        >
+          {check.isPending ? (
+            <p className="text-sm text-fg-subtle">Checking the worktrees…</p>
+          ) : null}
+          {data && data.running > 0 ? (
+            <div className="rounded-lg border border-st-permission/50 bg-st-permission/8">
+              <Warning title={`${plural(data.running, 'running session')} will be stopped`} />
+            </div>
+          ) : null}
+          {(data?.repos ?? []).map((r) => (
+            <RepoCard
+              key={r.projectId}
+              name={repoName(r.projectId)}
+              check={r}
+              branch={workspace.branch}
+              remote={repoRemote(r.projectId)}
+              alsoDeleteBranch={alsoDeleteBranches[r.projectId] ?? false}
+              onAlsoDeleteBranch={(value) =>
+                setAlsoDeleteBranches((all) => ({ ...all, [r.projectId]: value }))
+              }
+            />
+          ))}
+          <p className="flex items-center gap-1.5 text-sm text-fg-subtle">
+            <GuideLink to="delete-workspace" label="Deleting a workspace" before={onClose} />
+            What is kept and what goes
+          </p>
+          {(check.error ?? remove.error) ? (
+            <p role="alert" className="text-sm text-st-error select-text">
+              ✕ {(check.error ?? remove.error)?.message}
+            </p>
+          ) : null}
+          <ModalFooter>
+            <button
+              type="button"
+              data-autofocus
+              className={button('secondary', 'lg')}
+              onClick={onClose}
+            >
+              Cancel <Kbd>Esc</Kbd>
+            </button>
+            {dirty ? (
+              <button type="button" className={button('secondary', 'lg')} onClick={onCommitFirst}>
+                {remote ? 'Commit and push first' : 'Commit first'}
+              </button>
+            ) : null}
+            <button
+              type="submit"
+              className={button('danger', 'lg')}
+              disabled={!data || remove.isPending}
+            >
+              {remove.isPending ? 'Deleting…' : linkedDanger ? 'Delete anyway' : 'Delete'}
+            </button>
+          </ModalFooter>
+        </form>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      title={`Delete ${workspace.name}?`}
+      description={
+        <>
+          Removes the worktree at <span className="font-mono">{workspace.worktreePath}</span>
+          {hasUnpushed ? null : (
+            <>
+              {' '}
+              and the local branch <span className="font-mono">{workspace.branch}</span>
+            </>
+          )}
+          , and ends its terminals.{remote ? ` The branch on ${remote} is kept.` : ''}
+        </>
+      }
+      onClose={onClose}
+    >
+      <form
+        className="text-md"
+        onSubmit={(event) => {
+          event.preventDefault();
+          remove.mutate(
+            { workspaceId: workspace.id, force, deleteBranch },
+            { onError: () => setRefused(true) },
+          );
+        }}
+      >
+        {check.isPending ? <p className="text-sm text-fg-subtle">Checking the worktree…</p> : null}
+        {data && warnings ? (
+          <div className="divide-y divide-st-permission/30 rounded-lg border border-st-permission/50 bg-st-permission/8">
+            {changes.length > 0 ? (
+              <Warning title={plural(changes.length, 'uncommitted change')}>
+                {shown.join(' · ')}
+                {changes.length > shown.length ? ` · ${changes.length - shown.length} more` : ''}
+              </Warning>
+            ) : null}
+            {data.unpushed > 0 ? (
+              <Warning title={`${plural(data.unpushed, 'commit')} not pushed`}>
+                {remote
+                  ? `${workspace.branch} has commits that aren't on ${remote}`
+                  : `${workspace.branch} has commits that aren't on any other branch`}
+              </Warning>
+            ) : null}
+            {data.prOpen ? (
+              <Warning title="Its pull request isn't merged">
+                The last check found it {workspace.pr?.state === 'draft' ? 'a draft' : 'open'}
+              </Warning>
+            ) : null}
+            {data.running > 0 ? (
+              <Warning title={`${plural(data.running, 'running session')} will be stopped`} />
+            ) : null}
+          </div>
+        ) : null}
+        {hasUnpushed ? (
+          <label className="mt-3 flex items-center gap-2 text-md text-fg">
+            <input
+              type="checkbox"
+              className="size-3.5 accent-fg"
+              checked={alsoDeleteBranch}
+              onChange={(e) => setAlsoDeleteBranch(e.target.checked)}
+            />
+            Also delete the local branch <span className="font-mono">{workspace.branch}</span>
+          </label>
+        ) : null}
+        <p className="mt-3 flex items-center gap-1.5 text-sm text-fg-subtle">
+          <GuideLink to="delete-workspace" label="Deleting a workspace" before={onClose} />
+          What is kept and what goes
+        </p>
+        {data?.worktreeMissing ? (
+          <p className="mt-2 text-sm text-fg-muted">The worktree folder is already gone.</p>
+        ) : null}
+        {(check.error ?? remove.error) ? (
+          <p role="alert" className="mt-3 text-sm text-st-error select-text">
+            ✕ {(check.error ?? remove.error)?.message}
+          </p>
+        ) : null}
+
+        <ModalFooter>
+          <button
+            type="button"
+            data-autofocus
+            className={button('secondary', 'lg')}
+            onClick={onClose}
+          >
+            Cancel <Kbd>Esc</Kbd>
+          </button>
+          {data && (data.uncommitted.length > 0 || data.unpushed > 0) ? (
+            <button type="button" className={button('secondary', 'lg')} onClick={onCommitFirst}>
+              {remote ? 'Commit and push first' : 'Commit first'}
+            </button>
+          ) : null}
+          <button
+            type="submit"
+            className={button('danger', 'lg')}
+            disabled={!data || remove.isPending}
+          >
+            {remove.isPending ? 'Deleting…' : danger ? 'Delete anyway' : 'Delete'}
+          </button>
+        </ModalFooter>
+      </form>
+    </Modal>
+  );
+}

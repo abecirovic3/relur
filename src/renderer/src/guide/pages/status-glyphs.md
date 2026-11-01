@@ -1,0 +1,25 @@
+# Status glyphs
+
+Each workspace shows its state as a glyph in the sidebar, on its Claude tab and in the project's table. The states come from Claude Code itself, through hooks {{app}} adds when it starts Claude.
+
+:::glyphs
+:::
+
+A collapsed project in the sidebar shows the most urgent glyph among its workspaces and the ones linked into it, so nothing waits unseen; click it to open that workspace (see [The sidebar](sidebar#a-collapsed-project-still-tells-you)).
+
+A workspace that is starting shows the spinner while Claude launches, then no glyph until Claude reports something. Pressing <kbd>Esc</kbd> while Claude works interrupts it; that shows no glyph either.
+
+## Work in the background
+
+Claude can start work that goes on after its turn ends: background agents, or commands it runs in the background. Commands you run yourself in the workspace's Shell tabs don't count.
+
+- **Background agents:** while one runs, the workspace stays **Working**, since Claude continues once the agents hand back their results. The sidebar row shows how many tasks run, like **2 in background**, and so do its tooltip ("Working · 2 in background") and the project's table. You get the Done notification and sound only once Claude has finished and nothing is pending.
+- **Commands:** {{app}} can't tell a command Claude waits for (a long test run) from one it leaves running on purpose (a dev server), so the workspace is **Done**, with a note: **1 running** in the sidebar row and "1 still running in the background" in its tooltip and the notification. If Claude was waiting for the command, it carries on when the command ends: the workspace shows Working again, then Done.
+
+Quitting Claude ends its background work too.
+
+Answering a permission question in the Claude tab moves the workspace on at once: to Working after **Yes**, and to Waiting for input after **No** or <kbd>Esc</kbd>, since Claude then waits for you to say what to do instead.
+
+## Needs you
+
+Needs permission, Waiting for input and Awaiting approval (your skills wait at a [workflow gate](workflows#when-the-skills-wait-for-you)) count as needing you: the profile tab shows a badge with their number, the status bar says how many (**1 needs you**, next to **2 working** while Claude works in others), Home lists them under **Needs you** with the oldest first, and <kbd>{{key:nextNeedingYou}}</kbd> jumps to the next one.

@@ -1,0 +1,29 @@
+# Notifications and sounds
+
+{{app}} tells you when Claude needs you or has finished.
+
+- A notification when Claude needs permission, waits for input or is done, titled with the profile and the task, like "[Work] ABC-123 needs permission", with Claude's message below. None appears while that workspace's Claude tab is in front of you in the focused window. Clicking one opens the profile, selects the workspace and puts its Claude tab in focus. When your skills stop at a [workflow gate](workflows#when-the-skills-wait-for-you), you get one notification, "waits for you", and no separate "is done". While Claude waits for its background agents there's no "is done" yet; when commands it started still run, "is done" says so (see [Work in the background](status-glyphs#work-in-the-background)).
+- A short sound, only for the events you chose for the profile. All sounds are off until you turn them on: see [Sounds](notifications#sounds).
+- **Do Not Disturb** in [Edit profile](edit-profile) › General silences both for that profile. Glyphs and badges still update.
+
+## Badges
+
+The profile tab shows how many of that profile's workspaces need you: Needs permission, Waiting for input or Awaiting approval. {{mac}}The badge on the Dock icon adds them up across all profiles, so you see it with the window hidden.{{/mac}}{{other}}The window title starts with the total across all profiles, as in `(2) Work — {{app}}`, so the taskbar and the window switcher show it. Docks that show badges (Ubuntu Dock, KDE Plasma, Dash to Dock, Dash to Panel, Plank) also put it on {{app}}'s icon once {{app}} is installed with its desktop entry; GNOME without Ubuntu's dock, Cinnamon and Xfce show no badges.{{/other}} See [Needs you](status-glyphs#needs-you).
+
+## Sounds
+
+In [Edit profile](edit-profile) › General, **Sounds** has a checkbox per event, for that profile. All are off to begin with. Ticking one plays its sound, so you know what it sounds like.
+
+| Sound | When |
+| --- | --- |
+| Needs permission | Claude asks to use a tool (two rising notes) |
+| Waiting for input | Claude asks you a question (two rising notes) |
+| Awaiting approval | Your skills stop at a [workflow gate](workflows#when-the-skills-wait-for-you) (two rising notes) |
+| Done | Claude has finished, with no background agent still running (one soft note) |
+| Error | A workspace's setup or start failed (two falling notes). There's no notification for it |
+
+Like notifications, a sound doesn't play while you're looking at that workspace's Claude tab, and **Do Not Disturb** silences all of them.
+
+:::note Allow notifications
+{{mac}}macOS asks the first time. If none appear, allow them for {{app}} in System Settings › Notifications. When you run {{app}} from its source code, macOS lists them under "Electron" instead.{{/mac}}{{other}}Linux desktops show them without asking. If none appear, check your desktop's notification settings for {{app}}, and that its do-not-disturb mode is off.{{/other}}
+:::

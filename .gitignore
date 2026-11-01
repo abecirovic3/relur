@@ -1,0 +1,16 @@
+node_modules/
+out/
+dist/
+*.log
+.DS_Store
+
+# Local-only files, not published.
+CLAUDE.local.md
+docs/m0-findings.md
+docs/agents-plan.md
+docs/design/
+docs/promo/
+scripts/smoke-*.ts
+scripts/lib/claude-tui.ts
+scripts/promo-screenshots.ts
+scripts/promo/

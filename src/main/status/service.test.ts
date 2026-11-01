@@ -1,0 +1,300 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { Workspace } from '@shared/workspaces';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { openStateDb } from '../db/state-db';
+import { WorkspaceRecords } from '../db/workspaces';
+import { SessionHost } from '../sessions/host';
+import { type Alert, StatusService } from './service';
+
+const workspace: Omit<Workspace, 'repos'> = {
+  id: 'ws_1',
+  profileId: 'work',
+  projectId: 'api',
+  name: 'PROJ-1 Fix login',
+  task: { id: 'PROJ-1', title: 'Fix login', url: null },
+  branch: 'PROJ-1-fix-login',
+  baseBranch: 'main',
+  worktreePath: '/w/PROJ-1-fix-login',
+  state: 'starting',
+  unread: false,
+  stateMessage: null,
+  background: 0,
+  stateSince: null,
+  claudeSessionId: null,
+  ports: null,
+  pr: null,
+  createdAt: '2026-10-28T10:00:00Z',
+  lastActivityAt: null,
+};
+
+let records: WorkspaceRecords;
+let host: SessionHost;
+let status: StatusService;
+let visible: boolean;
+let quiet: boolean;
+let notified: Alert[];
+let badge: number;
+
+beforeEach(() => {
+  records = new WorkspaceRecords(openStateDb(':memory:'));
+  records.insert(workspace);
+  host = new SessionHost({ killTimeoutMs: 300 });
+  visible = false;
+  quiet = false;
+  notified = [];
+  badge = -1;
+  status = new StatusService(
+    records,
+    host,
+    {
+      claudeTabInFocus: () => visible,
+      quiet: () => quiet,
+      profileName: () => 'Work',
+      notify: (a) => notified.push(a),
+      setBadge: (n) => {
+        badge = n;
+      },
+    },
+    [50],
+  );
+});
+afterEach(() => host.stopAll());
+
+const hook = (event: string, payload: unknown = {}, workspaceId: string | null = 'ws_1') =>
+  status.handleHook({ event, workspaceId, profileId: 'work', payload });
+const state = () => records.get('ws_1')?.state;
+
+describe('StatusService', () => {
+  it('plays the Error sound when a workspace goes into Error, without a notification', () => {
+    const alerts: Alert[] = [];
+    status.onAlert((a) => alerts.push(a));
+    records.setState('ws_1', 'error', { message: 'Setup failed' });
+    records.setState('ws_1', 'error', { message: 'Still failing' });
+    expect(alerts.map((a) => [a.state, a.title, a.body])).toEqual([
+      ['error', '[Work] PROJ-1 failed', 'Setup failed'],
+    ]);
+    expect(notified).toEqual([]);
+    // Not while you're looking at it, nor with Do Not Disturb.
+    records.setState('ws_1', 'starting');
+    visible = true;
+    records.setState('ws_1', 'error');
+    records.setState('ws_1', 'starting');
+    visible = false;
+    quiet = true;
+    records.setState('ws_1', 'error');
+    expect(alerts).toHaveLength(1);
+  });
+
+  it('moves the state with hooks, notifies, counts the badge and keeps the session id', () => {
+    hook('SessionStart', { session_id: 's1', transcript_path: '/t/s1.jsonl' });
+    expect(records.get('ws_1')?.claudeSessionId).toBe('s1');
+    hook('UserPromptSubmit');
+    expect(state()).toBe('working');
+    hook('Notification', { message: 'Claude needs your permission to use Bash' });
+    expect(state()).toBe('needs-permission');
+    expect(badge).toBe(1);
+    expect(notified).toEqual([
+      {
+        workspaceId: 'ws_1',
+        profileId: 'work',
+        state: 'needs-permission',
+        title: '[Work] PROJ-1 needs permission',
+        body: 'Claude needs your permission to use Bash',
+      },
+    ]);
+    hook('PostToolUse');
+    expect(badge).toBe(0);
+    hook('Stop');
+    expect(records.get('ws_1')).toMatchObject({ state: 'done', unread: true });
+    // The idle notice after Done changes nothing and doesn't alert again.
+    hook('Notification', { message: 'Claude is waiting for your input' });
+    expect(state()).toBe('done');
+    expect(notified.map((a) => a.state)).toEqual(['needs-permission', 'done']);
+  });
+
+  it('stays quiet while the Claude tab is in focus or the profile is on Do Not Disturb', () => {
+    visible = true;
+    hook('Stop');
+    expect(records.get('ws_1')).toMatchObject({ state: 'done', unread: false });
+    visible = false;
+    quiet = true;
+    hook('Notification', { message: 'Allow?' });
+    expect(state()).toBe('needs-permission');
+    expect(notified).toEqual([]);
+  });
+
+  it('finds the workspace by working directory when the id is missing', () => {
+    hook('UserPromptSubmit', { cwd: '/w/PROJ-1-fix-login' }, null);
+    expect(state()).toBe('working');
+  });
+
+  it('starts, interrupts on Esc while Working and exits with the process', async () => {
+    const session = host.spawn({
+      kind: 'claude',
+      title: 'claude',
+      command: '/bin/sh',
+      args: ['-c', 'read x'],
+      cwd: '/',
+      env: { PATH: '/usr/bin:/bin' },
+      profileId: 'work',
+      workspaceId: 'ws_1',
+    });
+    expect(state()).toBe('starting');
+    expect(records.claudeWasRunning().map((w) => w.id)).toEqual(['ws_1']);
+    hook('UserPromptSubmit');
+    const view = host.attach(session.id, { send: () => {}, close: () => {} });
+    view.input('\x1b');
+    expect(state()).toBe('interrupted');
+    view.input('\r');
+    await vi.waitFor(() => expect(state()).toBe('exited'));
+    expect(records.claudeWasRunning()).toEqual([]);
+  });
+
+  it('stays Working while Claude waits for background agents, then is Done once', async () => {
+    const session = host.spawn({
+      kind: 'claude',
+      title: 'claude',
+      command: '/bin/sh',
+      args: ['-c', 'read x'],
+      cwd: '/',
+      env: { PATH: '/usr/bin:/bin' },
+      profileId: 'work',
+      workspaceId: 'ws_1',
+    });
+    const agents = (n: number) => ({
+      background_tasks: Array.from({ length: n }, (_, i) => ({
+        id: `a${i}`,
+        type: 'subagent',
+        status: 'running',
+      })),
+    });
+    hook('UserPromptSubmit');
+    hook('Stop', agents(2));
+    expect(records.get('ws_1')).toMatchObject({ state: 'working', background: 2 });
+    expect(notified).toEqual([]);
+    // The agents' own tools keep it; the idle notice and Esc at Claude's prompt don't count.
+    hook('PreToolUse', { agent_id: 'a0', tool_name: 'Bash' });
+    hook('Notification', {
+      notification_type: 'idle_prompt',
+      message: 'Claude is waiting for your input',
+    });
+    const view = host.attach(session.id, { send: () => {}, close: () => {} });
+    view.input('\x1b');
+    expect(records.get('ws_1')).toMatchObject({ state: 'working', background: 2 });
+    // One agent hands back: Claude takes another turn, then waits for the other.
+    hook('UserPromptSubmit', { prompt: '<task-notification>…</task-notification>' });
+    hook('Stop', agents(1));
+    expect(records.get('ws_1')).toMatchObject({ state: 'working', background: 1 });
+    hook('UserPromptSubmit', { prompt: '<task-notification>…</task-notification>' });
+    hook('Stop', agents(0));
+    expect(records.get('ws_1')).toMatchObject({ state: 'done', background: 0, unread: true });
+    expect(notified.map((a) => [a.state, a.body])).toEqual([['done', 'Fix login']]);
+    // Esc while Claude itself works still interrupts.
+    hook('UserPromptSubmit');
+    view.input('\x1b');
+    expect(state()).toBe('interrupted');
+  });
+
+  it('sends no prompt for background work handing back (spec §6.8)', () => {
+    const events: string[] = [];
+    status.onConversation((e) => events.push(`${e.event}:${e.text}`));
+    hook('UserPromptSubmit', { prompt: 'Run it in the background' });
+    hook('Stop', { last_assistant_message: 'Started.' });
+    hook('UserPromptSubmit', { prompt: '<task-notification>\n<task-id>b1</task-id>' });
+    hook('UserPromptSubmit', { prompt: '<agent-message from="a1">\nReport' });
+    hook('Stop', { last_assistant_message: 'It finished.' });
+    expect(events).toEqual([
+      'UserPromptSubmit:Run it in the background',
+      'Stop:Started.',
+      'Stop:It finished.',
+    ]);
+    expect(state()).toBe('done');
+  });
+
+  it('is Done with a note when only commands Claude started still run', () => {
+    hook('UserPromptSubmit');
+    hook('Stop', {
+      background_tasks: [{ id: 'b1', type: 'shell', status: 'running', command: 'npm run dev' }],
+    });
+    expect(records.get('ws_1')).toMatchObject({ state: 'done', background: 1 });
+    expect(notified.map((a) => [a.state, a.body])).toEqual([
+      ['done', 'Fix login · 1 still running in the background'],
+    ]);
+    // The idle notice after Done changes nothing; the count stays until the next Stop.
+    hook('Notification', {
+      notification_type: 'idle_prompt',
+      message: 'Claude is waiting for your input',
+    });
+    expect(state()).toBe('done');
+    hook('UserPromptSubmit');
+    expect(records.get('ws_1')).toMatchObject({ state: 'working', background: 1 });
+    hook('SessionEnd');
+    expect(records.get('ws_1')).toMatchObject({ state: 'exited', background: 0 });
+  });
+
+  it('leaves Needs permission when the prompt is answered in the Claude tab', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-'));
+    const transcript = path.join(dir, 's.jsonl');
+    fs.writeFileSync(transcript, '');
+    try {
+      const session = host.spawn({
+        kind: 'claude',
+        title: 'claude',
+        command: '/bin/sh',
+        args: ['-c', 'sleep 30'],
+        cwd: '/',
+        env: { PATH: '/usr/bin:/bin' },
+        profileId: 'work',
+        workspaceId: 'ws_1',
+      });
+      const view = host.attach(session.id, { send: () => {}, close: () => {} });
+      hook('UserPromptSubmit', { transcript_path: transcript });
+      hook('Notification', { notification_type: 'permission_prompt', message: 'Allow?' });
+      // Arrow keys only move the choice.
+      view.input('\x1b[B');
+      expect(state()).toBe('needs-permission');
+      // Yes: Working until the next hook event.
+      view.input('\r');
+      expect(state()).toBe('working');
+      await new Promise((r) => setTimeout(r, 100));
+      expect(state()).toBe('working');
+      // No: Claude Code sends nothing; its interrupt note in the transcript says so.
+      hook('Notification', { notification_type: 'permission_prompt', message: 'Allow?' });
+      fs.appendFileSync(
+        transcript,
+        `${JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } })}\n`,
+      );
+      view.input('\x1b');
+      expect(state()).toBe('working');
+      await vi.waitFor(() => expect(state()).toBe('needs-input'));
+      expect(records.get('ws_1')?.stateMessage).toMatch(/Permission denied/);
+      // A hook event before the check decides instead.
+      hook('Notification', { notification_type: 'permission_prompt', message: 'Allow?' });
+      view.input('2');
+      hook('Stop');
+      await new Promise((r) => setTimeout(r, 100));
+      expect(state()).toBe('done');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps Claude marked for resume when the app quits', async () => {
+    const session = host.spawn({
+      kind: 'claude',
+      title: 'claude',
+      command: '/bin/sh',
+      args: ['-c', 'sleep 30'],
+      cwd: '/',
+      env: { PATH: '/usr/bin:/bin' },
+      profileId: 'work',
+      workspaceId: 'ws_1',
+    });
+    status.quitting = true;
+    await host.stop(session.id);
+    expect(state()).toBe('exited');
+    expect(records.claudeWasRunning().map((w) => w.id)).toEqual(['ws_1']);
+  });
+});
