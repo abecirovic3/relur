@@ -175,8 +175,14 @@ export interface RunningApp {
   process: ChildProcess;
   page: Cdp;
   main: Cdp;
-  /** SIGTERM, then SIGKILL after 10 s; true when it had to kill. */
+  /**
+   * Quits as a user does (⌘Q on macOS, the menu's Quit elsewhere, again to
+   * confirm the quit dialog), then SIGTERM and SIGKILL if it's still running
+   * after 10 s each; true when it had to signal.
+   */
   stop(): Promise<boolean>;
+  /** SIGTERM (as at logout or from a test runner), then SIGKILL after 10 s; true when it had to kill. */
+  terminate(): Promise<boolean>;
   /** Electron's main process. */
   pid: number;
   /** Connects to the window again, once a new one has opened and its UI is ready. */
@@ -288,7 +294,42 @@ export async function launchApp(options: {
   // mode's electron-vite) only once it's gone: on Linux, with Chromium's
   // sandbox on, a zygote killed alongside it can't be replaced and the app
   // aborts before it saves the window's local storage.
+  const gone = async (timeoutMs: number) => {
+    for (const end = Date.now() + timeoutMs; Date.now() < end; ) {
+      if (!alive(electronPid)) return true;
+      await sleep(100);
+    }
+    return false;
+  };
+  // ⌘Q, the app menu's Quit, the Dock's Quit and logout send Cocoa's
+  // terminate: on macOS; elsewhere the menu's Quit calls app.quit. Sent from a
+  // connection of its own: an attached inspector keeps the app from exiting.
+  const quitOnce = async () => {
+    try {
+      const main = new Cdp(await debuggerUrl(inspectPort));
+      await main.eval(
+        process.platform === 'darwin'
+          ? `void setTimeout(() => process.mainModule.require('electron').Menu.sendActionToFirstResponder('terminate:'))`
+          : `void setTimeout(() => process.mainModule.require('electron').app.quit())`,
+      );
+      main.close();
+    } catch {
+      // already quitting
+    }
+  };
   const stop = async () => {
+    if (alive(electronPid)) {
+      await quitOnce();
+      // While sessions run, the quit dialog asks; quitting again confirms it
+      // (components.md: ⌘Q again confirms).
+      if (!(await gone(1500))) await quitOnce();
+      // Electron's command line wrapper (or electron-vite) exits with it.
+      if ((await gone(10_000)) && (await exited(10_000))) return false;
+    }
+    await terminate();
+    return true;
+  };
+  const terminate = async () => {
     signal(electronPid ?? (child.pid && -child.pid), 'SIGTERM');
     for (const end = Date.now() + 10_000; Date.now() < end; ) {
       if (!alive(electronPid)) break;
@@ -329,6 +370,7 @@ export async function launchApp(options: {
       page,
       main,
       stop,
+      terminate,
       pid: electronPid,
       reconnect: connectPage,
       exited,

@@ -10,12 +10,20 @@ export const isSelfTest = process.argv.includes('--self-test');
  * render, fails on any renderer console error (CSP violations included), runs
  * `check` for main-process services, and exits with 0 on success.
  */
-export function runSelfTest(win: BrowserWindow, check: () => Promise<string | null>): void {
+export function runSelfTest(
+  win: BrowserWindow,
+  check: () => Promise<string | null>,
+  shutdown: () => Promise<void>,
+): void {
   const errors: string[] = [];
+  let finished = false;
   const finish = (ok: boolean, detail: string) => {
+    if (finished) return;
+    finished = true;
     const out = ok ? process.stdout : process.stderr;
     out.write(`self-test ${ok ? 'passed' : 'failed'}: ${detail}\n`);
-    app.exit(ok ? 0 : 1);
+    // app.exit skips will-quit: stop the terminals first (spec §5).
+    void shutdown().finally(() => app.exit(ok ? 0 : 1));
   };
 
   const timer = setTimeout(() => finish(false, 'timed out waiting for the UI'), TIMEOUT_MS);

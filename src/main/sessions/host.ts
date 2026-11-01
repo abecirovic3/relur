@@ -143,6 +143,8 @@ export class SessionHost {
     const launchTimer = setTimeout(launched, this.launchMs);
 
     child.onData((data) => {
+      // Quitting: the views are going away (spec §5).
+      if (this.closed) return;
       launched();
       session.scrollback.push(data);
       session.pending += data;
@@ -150,7 +152,7 @@ export class SessionHost {
     });
     child.onExit(({ exitCode, signal }) => {
       clearTimeout(launchTimer);
-      this.flush(session);
+      if (session.flushTimer) clearTimeout(session.flushTimer);
       session.info = {
         ...session.info,
         status: 'exited',
@@ -158,11 +160,21 @@ export class SessionHost {
         signal: signal || null,
         launching: false,
       };
-      for (const sink of session.sinks)
-        sink.send({ type: 'exit', exitCode, signal: signal || null });
       markExited();
-      this.events.emit('exit', session.info);
-      this.changed();
+      // Once quitting, an exit only ends the session: nothing goes to views or
+      // listeners that are shutting down (spec §5).
+      if (this.closed) return;
+      // node-pty calls this from native code: an exception thrown here would
+      // surface as an uncaught one in the main process.
+      try {
+        this.flush(session);
+        for (const sink of session.sinks)
+          sink.send({ type: 'exit', exitCode, signal: signal || null });
+        this.events.emit('exit', session.info);
+        this.changed();
+      } catch (error) {
+        console.error('terminal exit handling failed', error);
+      }
     });
 
     this.sessions.set(session.info.id, session);
@@ -315,11 +327,12 @@ export class SessionHost {
   }
 
   /**
-   * Refuses new sessions from now on, once quitting goes ahead (spec §5). A
-   * start that was already on its way (a view asking for Claude while the
-   * window loads) would otherwise spawn after stopAll, and its process would
-   * end while Electron shuts down: node-pty's exit callback then has no
-   * JavaScript left to call and aborts the app.
+   * Refuses new sessions from now on, once quitting goes ahead (spec §5), and
+   * stops listening to the running ones' output. A start that was already on
+   * its way (a view asking for Claude while the window loads) would otherwise
+   * spawn after stopAll, and its process would end while Electron shuts down:
+   * node-pty's exit callback then has no JavaScript left to call and aborts
+   * the app.
    */
   close(): void {
     this.closed = true;
@@ -327,6 +340,16 @@ export class SessionHost {
 
   async stopAll(): Promise<void> {
     await Promise.all(this.list().map((s) => this.stop(s.id)));
+  }
+
+  /**
+   * For the app's last moment (spec §5): refuses new sessions and stops every
+   * running one, resolving once node-pty has reported each exit, so none can
+   * arrive while Electron tears Node down.
+   */
+  async shutdown(): Promise<void> {
+    this.close();
+    await this.stopAll();
   }
 
   onChange(listener: () => void): () => void {

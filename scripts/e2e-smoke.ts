@@ -3400,7 +3400,7 @@ exec sleep 600
     mainProcess.close();
     // SIGTERM (a test runner, logout) quits without asking and stops the
     // sessions that still run (spec §5); no SIGKILL needed.
-    const killed = await app.stop();
+    const killed = await app.terminate();
     assert.equal(killed, false, 'the app quit on SIGTERM by itself');
     await assertExitedCleanly(app, 'SIGTERM');
     app = undefined;
@@ -3421,9 +3421,9 @@ exec sleep 600
     const quit = async (running: RunningApp) => {
       running.page.close();
       running.main.close();
-      await running.stop();
+      // As a user quits; right after a launch the window still starts its sessions (spec §5).
+      assert.equal(await running.stop(), false, 'the app quit by itself');
       app = undefined;
-      // Right after a launch, while the window still starts its sessions (spec §5).
       await assertExitedCleanly(running, 'quit after a restart');
     };
     const afterRestart = await restart('cartweb');

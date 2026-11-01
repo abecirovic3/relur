@@ -64,6 +64,19 @@ describe('SessionHost', () => {
     expect(host.runningCount()).toBe(0);
   });
 
+  it('sends nothing to views once closed, and shutdown waits for every exit', async () => {
+    // Ignores the stop signals, prints once quitting began, then gets SIGKILL.
+    const host = new SessionHost({ batchMs: 5, killTimeoutMs: 600 });
+    const session = host.spawn(sh('trap "" HUP TERM; sleep 0.2; printf late; sleep 5'));
+    const view = recorder();
+    host.attach(session.id, view.sink);
+    const before = view.messages.length;
+    await host.shutdown();
+    expect(host.get(session.id).status).toBe('exited');
+    expect(view.messages.length).toBe(before);
+    expect(() => host.spawn(sh('true'))).toThrow(/Quitting/);
+  });
+
   it('keeps marks at their place in the output and sends them with the replay', async () => {
     const host = new SessionHost({ batchMs: 5 });
     const session = host.spawn(sh('printf one; read x; printf two; read y'));

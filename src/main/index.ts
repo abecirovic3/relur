@@ -74,6 +74,24 @@ if (process.platform === 'win32') app.setAppUserModelId(BRAND.bundleId);
 let mainWindow: BrowserWindow | null = null;
 let env: EnvService;
 const host = new SessionHost();
+
+/** Cleanups for the app's last moment, run once no session runs (spec §5). */
+const shutdownTasks: (() => void)[] = [];
+const atShutdown = (task: () => void) => {
+  shutdownTasks.push(task);
+};
+// The one will-quit handler. A terminal still running here would end while
+// Electron tears Node down, where node-pty's exit callback aborts the app
+// ("quit unexpectedly"): it is stopped first and the quit goes on after.
+app.on('will-quit', (event) => {
+  host.close();
+  if (host.runningCount() > 0) {
+    event.preventDefault();
+    void host.shutdown().then(() => app.quit());
+    return;
+  }
+  for (const task of shutdownTasks.splice(0)) task();
+});
 const bridge = new HookBridge();
 let status: StatusService | null = null;
 let statusPlatform: ElectronStatusPlatform | null = null;
@@ -142,7 +160,7 @@ function showMainWindow(): void {
     if (mainWindow === win) mainWindow = null;
     answerCloseNotice = null;
   });
-  if (isSelfTest) runSelfTest(mainWindow, selfTestCheck);
+  if (isSelfTest) runSelfTest(mainWindow, selfTestCheck, () => host.shutdown());
 }
 
 /**
@@ -214,7 +232,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     await bridge.start();
     const cliFile = path.join(dataDir, 'cli.json');
     bridge.writeCliFile(cliFile);
-    app.on('will-quit', () => {
+    atShutdown(() => {
       fs.rmSync(cliFile, { force: true });
       void bridge.stop();
     });
@@ -230,7 +248,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     appConfig = config;
     appDataDir = dataDir;
     const db = openStateDb(path.join(dataDir, 'state.db'));
-    app.on('will-quit', () => db.close());
+    atShutdown(() => db.close());
     env = new EnvService(config);
 
     installSecurityPolicies();
@@ -335,9 +353,9 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     const worktreeNotices = new WorktreeNotices(config, workspaces);
     void worktreeNotices.start();
     app.on('browser-window-focus', () => worktreeNotices.focused());
-    app.on('will-quit', () => worktreeNotices.dispose());
+    atShutdown(() => worktreeNotices.dispose());
     app.on('browser-window-focus', () => workflow.refreshAll());
-    app.on('will-quit', () => {
+    atShutdown(() => {
       workflow.dispose();
       workflow.lookups?.dispose();
       workflowSetup.dispose();
@@ -353,7 +371,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     // PR status (spec §12.4): every 5 minutes, and when the window gains focus.
     const finish = new FinishService(config, workspaceRecords, terminals);
     const prTimer = setInterval(() => void finish.refreshAll(), PR_POLL_MS);
-    app.on('will-quit', () => clearInterval(prTimer));
+    atShutdown(() => clearInterval(prTimer));
     let lastFocusCheck = 0;
     app.on('browser-window-focus', () => {
       if (Date.now() - lastFocusCheck < 60_000) return;
