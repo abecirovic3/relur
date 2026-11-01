@@ -13,6 +13,11 @@ if [[ -n "${PLATFORM:-}" ]]; then platform_args=(--platform "$PLATFORM"); fi
 
 docker build ${platform_args[@]+"${platform_args[@]}"} -f scripts/linux-package.Dockerfile -t "$image" .
 mkdir -p dist
-docker run --rm ${platform_args[@]+"${platform_args[@]}"} -e VERSION="${VERSION:-}" \
-  -v "$PWD/dist:/out" "$image"
-(cd dist && ls -- *-linux-*.AppImage *-linux-*.deb)
+# No mounted output folder: on a Linux host it belongs to the host's uid, not
+# the container's node user. docker cp writes as the user running it, so the
+# packages belong to the host's user on Linux and on Docker Desktop alike.
+container=$(docker create ${platform_args[@]+"${platform_args[@]}"} -e VERSION="${VERSION:-}" "$image")
+trap 'docker rm -f "$container" >/dev/null' EXIT
+docker start -a "$container"
+docker cp "$container:/home/node/out/." dist/
+(cd dist && ls -l -- *-linux-*.AppImage *-linux-*.deb)

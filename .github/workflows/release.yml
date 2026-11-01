@@ -15,12 +15,12 @@ permissions:
 
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -39,7 +39,7 @@ jobs:
           npm run build
           npx tsx --tsconfig tsconfig.node.json scripts/package.ts --platform mac --arch all
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mac
           path: |
@@ -60,7 +60,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build the AppImage and .deb
         run: VERSION="${GITHUB_REF_NAME#v}" scripts/linux-package.sh
@@ -68,7 +68,7 @@ jobs:
       - name: Try them on Ubuntu 24.04 (install.sh, self-test, sandbox, .deb)
         run: SKIP_BUILD=1 scripts/linux-package-check.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
           path: |
@@ -80,7 +80,7 @@ jobs:
     needs: [macos, linux]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true

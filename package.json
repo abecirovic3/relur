@@ -4,6 +4,10 @@
   "private": true,
   "description": "Desktop app for running parallel Claude Code sessions in git worktrees",
   "license": "MIT",
+  "author": {
+    "name": "Dino Zecevic",
+    "email": "dinozecevic06@gmail.com"
+  },
   "main": "out/main/index.js",
   "scripts": {
     "dev": "tsx scripts/build-helper.ts && electron-vite dev",

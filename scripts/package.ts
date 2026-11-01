@@ -176,7 +176,7 @@ function config(arch: Arch): Configuration {
       icon: 'build/icons',
       category: 'Development',
       synopsis: 'Parallel Claude Code sessions in git worktrees',
-      maintainer: `${BRAND.github.owner} <${BRAND.github.owner}@users.noreply.github.com>`,
+      // The .deb's maintainer is package.json's author.
       vendor: BRAND.github.owner,
       syncDesktopName: true,
       artifactName: artifactName(arch, 'AppImage'),

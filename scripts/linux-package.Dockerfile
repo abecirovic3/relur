@@ -17,5 +17,8 @@ COPY --chown=node:node scripts/postinstall.mjs scripts/
 RUN npm ci
 COPY --chown=node:node . .
 
-# The version from the release tag, when given (VERSION=1.2.3).
-CMD ["sh", "-c", "if [ -n \"${VERSION:-}\" ]; then npm version --no-git-tag-version --allow-same-version \"$VERSION\" >/dev/null; fi && npm run build && npx tsx --tsconfig tsconfig.node.json scripts/package.ts --platform linux && mkdir -p /out && cp dist/*-linux-*.AppImage dist/*-linux-*.deb /out/"]
+# The version from the release tag, when given (VERSION=1.2.3). The packages
+# end up in /home/node/out, inside the container: scripts/linux-package.sh
+# takes them out with docker cp, so they belong to the host's user (a mounted
+# folder belongs to another uid on a Linux host, and node can't write to it).
+CMD ["sh", "-c", "if [ -n \"${VERSION:-}\" ]; then npm version --no-git-tag-version --allow-same-version \"$VERSION\" >/dev/null; fi && npm run build && npx tsx --tsconfig tsconfig.node.json scripts/package.ts --platform linux && mkdir -p /home/node/out && cp dist/*-linux-*.AppImage dist/*-linux-*.deb /home/node/out/"]
