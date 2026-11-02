@@ -13,4 +13,5 @@ docs/promo/
 scripts/smoke-*.ts
 scripts/lib/claude-tui.ts
 scripts/promo-screenshots.ts
+scripts/promo-demo.ts
 scripts/promo/

@@ -12,10 +12,7 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![macOS · Linux (beta)](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20(beta)-lightgrey)
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/workspace-working-dark.png">
-  <img src="docs/images/workspace-working-light.png" alt="Relur: projects and their workspaces in the sidebar, each with its status, and Claude Code working in the selected one">
-</picture>
+<img src="docs/images/demo.gif" width="1100" alt="Relur at work: Claude's output streams into a workspace; ⌘N creates a workspace for ABC-160 and Claude starts in its worktree; another workspace asks for permission and the Work tab's badge counts it; ⌘J jumps there, the permission is given and it works again; it turns Done and ⇧⌘D shows its diff">
 
 </div>
 
@@ -92,6 +89,13 @@ The in-app **Guide** (⇧⌘/) explains everything else.
 <summary><b>Screenshots</b></summary>
 
 <br>
+
+**Know when Claude needs you:** every workspace with its status in the sidebar, Claude Code working in the selected one.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/workspace-working-dark.png">
+  <img src="docs/images/workspace-working-light.png" alt="Relur: projects and their workspaces in the sidebar, each with its status, and Claude Code working in the selected one">
+</picture>
 
 **Review and ship:** the diff against the base branch, then Commit, Push and Create PR.
 
