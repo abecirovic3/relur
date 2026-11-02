@@ -5,7 +5,7 @@
 That happens when the app was downloaded with a browser: {{app}} isn't notarized by Apple, and macOS checks that for browser downloads. Open **System Settings › Privacy & Security**, click **Open Anyway** next to the message about {{app}}, and confirm; macOS asks only once. The install script and builds from source don't need this.
 {{/mac}}{{other}}## Linux: the app doesn't start, keys or badges
 
-See [{{app}} on Linux](linux): FUSE for the AppImage, the sandbox on Ubuntu 24.04, keys an input method takes, Wayland, and the Changes count.
+See [{{app}} on Linux](linux): FUSE for the AppImage, the sandbox on Ubuntu 23.10 and later (and the **Running without Chromium's sandbox** bar), keys an input method takes, Wayland, and the Changes count.
 {{/other}}
 ## "claude not found" after installing
 
@@ -35,6 +35,14 @@ Choose **Yes, I trust this folder**; the default answer is **No, exit**. Trust t
 ## Usage shows n/a or Stale
 
 Usage comes from Claude's status line, so it updates while Claude runs and answers. See [Plan usage](plan-usage).
+
+## Workspaces marked Unfinished after a restart
+
+{{app}} stopped Claude there while it worked, or stopped the commands it had left running. Open the workspace and choose **Continue** or **Dismiss** in the bar under the tabs. See [Work that was cut off](resume#work-that-was-cut-off).
+
+## Couldn't check for updates
+
+**Check for Updates…** says why, for example when GitHub can't be reached. The daily check stays quiet when it fails and tries again later. See [Updates and privacy](updates).
 
 ## Setup can't find a folder
 

@@ -1977,9 +1977,10 @@ exec sleep 600
       `${list}.dataset.changesList === 'sized' && Math.round(${list}.getBoundingClientRect().height) === ${autoHeight + 80}`,
       'the dragged height',
     );
-    assert.equal(
-      await page.eval(`localStorage.getItem('changes-list-height')`),
-      `${autoHeight + 80}`,
+    // Saved on release, which may come after the last move.
+    await page.waitFor(
+      `localStorage.getItem('changes-list-height') === '${autoHeight + 80}'`,
+      'the dragged height saved',
     );
     await page.eval(
       `document.querySelector('[data-changes-list-resize]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`,
@@ -1988,10 +1989,10 @@ exec sleep 600
     assert.equal(await page.eval(`localStorage.getItem('changes-list-height')`), null);
     await dragBy('[data-changes-list-resize]', 0, 60);
     await page.waitFor(`${list}.dataset.changesList === 'sized'`, 'dragged again');
-    const draggedHeight = await page.eval<number>(
-      `Number(localStorage.getItem('changes-list-height'))`,
+    await page.waitFor(
+      `localStorage.getItem('changes-list-height') === '${autoHeight + 60}'`,
+      'dragged again, saved',
     );
-    assert.equal(draggedHeight, autoHeight + 60);
     // Clicking a group's header collapses the list to one line: the current
     // file with previous and next, and the keys from inside the diff.
     const order = await page.eval<string[]>(
@@ -2054,7 +2055,10 @@ exec sleep 600
       `Math.round(${list}.getBoundingClientRect().width) === 340`,
       'the dragged column',
     );
-    assert.equal(await page.eval(`localStorage.getItem('changes-list-width')`), '340');
+    await page.waitFor(
+      `localStorage.getItem('changes-list-width') === '340'`,
+      'the dragged column saved',
+    );
     await pressKey(page, 'Escape');
     await page.waitFor(
       `document.querySelector('[data-changes-panel]').dataset.full === 'false' && ${list}?.dataset.changesList === 'sized'`,

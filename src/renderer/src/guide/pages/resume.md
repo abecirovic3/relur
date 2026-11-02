@@ -1,4 +1,6 @@
-# Resume
+# Quitting and resuming
+
+What happens to Claude and your terminals when you quit {{app}} or close its window, and how work that was cut off carries on.
 
 ## Quitting
 
@@ -8,7 +10,7 @@ Quitting while something runs asks first: **Stop n running sessions?** lists eac
 
 ## Closing the window
 
-{{mac}}On macOS, closing the window with <kbd>{{key:closeWindow}}</kbd> or its close button doesn't stop anything: {{app}} keeps running, so Claude finishes its work and notifications keep coming. Click {{app}} in the Dock to bring the window back. The first time you close it, {{app}} says so once; **Cancel** keeps the window open. The message never shows again.
+{{mac}}On macOS, closing the window with <kbd>{{key:closeWindow}}</kbd> or its close button doesn't stop anything: {{app}} keeps running, so Claude finishes its work and notifications keep coming. Click {{app}} in the Dock to bring the window back. The first time you close it, {{app}} says so once, in **{{app}} keeps running**: **Close Window** closes it, **Cancel** keeps it open. The message never shows again.
 
 To quit whenever the window closes, choose **Quit When the Window Closes** in the {{app}} menu (off at first). Closing the window then quits as <kbd>{{key:quit}}</kbd> does, asking first while something runs.{{/mac}}{{other}}On Linux, closing the window quits, asking first while something runs; **Cancel** keeps the window open.{{/other}}
 
@@ -31,10 +33,10 @@ The quit dialog says what comes next: "They'll continue when {{app}} starts agai
 
 ## Continuing it
 
-With **Continue interrupted work when {{app}} starts** on in [Edit profile › General](edit-profile) (off at first), {{app}} sends the profile's continue prompt to each workspace that was Working, once Claude has resumed there: one after another, a few seconds apart, and never while your [plan usage](plan-usage) is at its limit. A notice above the terminal lists them; **Stop** cancels the ones not sent yet, which stay unfinished. The default prompt tells Claude that {{app}} was closed while it worked, which stopped its commands and background agents, and to continue where it left off; you can edit it there.
+With **Continue interrupted work when {{app}} starts** on in [Edit profile › General](edit-profile) (off at first), {{app}} sends the profile's continue prompt to each workspace that was Working, once Claude has resumed there: one after another, a few seconds apart, and never while your [plan usage](plan-usage) is at its limit. A notice at the top of the view, **Continuing interrupted work:**, lists them and how far each got; **Stop** cancels the ones not sent yet, which stay unfinished. The default prompt tells Claude that {{app}} was closed while it worked, which stopped its commands and background agents, and to continue where it left off; you can edit it there.
 
 Otherwise, and for anything else left unfinished, {{app}} asks once at start, after the sessions have resumed: **Claude didn't finish in n workspaces**, grouped by profile, with each workspace's task, project, last prompt and when it stopped. Working ones are ticked; ones you interrupted with <kbd>Esc</kbd>, and ones whose background commands were stopped, aren't; a permission request has no checkbox. **Continue selected** (<kbd>{{key:confirm}}</kbd>) sends the continue prompt to the ticked ones, the same way; it's disabled, with the reason, while plan usage is at its limit. **Not now** (<kbd>Esc</kbd>) leaves them as they are, and **Open** goes to that workspace.
 
 ## The Unfinished marker
 
-An unfinished workspace shows **Unfinished** with two bars in its sidebar row ("Claude didn't finish when {{app}} closed") and is listed under Home's **Needs you**, without a notification or sound. In the workspace, a bar offers **Continue**, which sends the continue prompt, and **Dismiss**. Sending any prompt yourself clears the marker too.
+An unfinished workspace shows **Unfinished** with two bars in its sidebar row; its tooltip reads "Claude didn't finish when {{app}} closed", with "1 background command was stopped" after it when that's why. It's listed under Home's **Needs you**, without a notification or sound, and doesn't count toward the badges. In the workspace, a bar under the tabs says why and offers **Continue**, which sends the continue prompt (not for a permission request, which you give again in the Claude tab), and **Dismiss**, which removes the marker and sends nothing. Sending any prompt yourself clears the marker too.

@@ -10,15 +10,15 @@ The install script puts the AppImage in `~/Applications`, adds {{app}} to your d
 curl -fsSL https://raw.githubusercontent.com/{{repo}}/main/install.sh | sh
 ```
 
-Running it again updates {{app}}; `sh install.sh --uninstall` removes it and keeps your settings in `{{configDir}}`. There are no automatic updates.
+Running it again updates {{app}}; `sh install.sh --uninstall` removes it and keeps your settings in `{{configDir}}`. {{app}} never updates itself, but it can tell you when a new version is out, and **Update** runs this command for you; see [Updates and privacy](updates).
 
-On Debian and Ubuntu you can install the `.deb` from the release instead (`sudo apt install ./{{app}}-linux-x64.deb`). It installs to `/opt/{{app}}`, needs no FUSE, and sets up the sandbox by itself. **On Ubuntu 23.10 and later, use the `.deb`:** the AppImage works there too, but only after you list it for the sandbox once (see [The sandbox](linux#the-sandbox)). Updates are the same: install the newer `.deb`. **Install Command Line Tool…** in the **File** menu adds the `{{cli}}` command. Use one of the two, not both.
+On Debian and Ubuntu you can install the `.deb` from the release instead (`sudo apt install ./{{app}}-linux-x64.deb`). It installs to `/opt/{{app}}`, needs no FUSE, and sets up the sandbox by itself. **On Ubuntu 23.10 and later, use the `.deb`:** the AppImage works there too, but only after you list it for the sandbox once (see [The sandbox](linux#the-sandbox)). Updates are the same: install the newer `.deb`; the update notice shows the command. **Install Command Line Tool…** in the **File** menu adds the `{{cli}}` command. Use one of the two, not both.
 
 ## What's different from macOS
 
 - **Keys:** Ctrl takes the place of the Command key, except where the shell needs Ctrl with that letter: those shortcuts are Ctrl+Shift (Ctrl+Shift+L, Ctrl+Shift+W and so on), and **Check again** is F5. In terminals, Ctrl+Shift+C and Ctrl+Shift+V copy and paste. See [Keyboard shortcuts](shortcuts).
-- **The menu** is in the window: **File**, **Edit**, **View**, **Window** and **Help**. **Install Command Line Tool…** is in **File**, and **About** in **Help**.
-- **Closing the window quits {{app}}**, asking first while something runs. See [Quitting](resume#quitting).
+- **The menu** is in the window: **File**, **Edit**, **View**, **Window** and **Help**. **Install Command Line Tool…** and **Quit** are in **File**; **About**, **Check for Updates…** and **Check for Updates Automatically** in **Help**.
+- **Closing the window quits {{app}}**, asking first while something runs. See [Closing the window](resume#closing-the-window).
 - **Badges:** the window title starts with how many workspaces need you, and docks that show badges show it on the icon too. See [Badges](notifications#badges).
 - **Show in folder** opens the folder in your file manager, and links and files open in your default apps (through `xdg-open`).
 

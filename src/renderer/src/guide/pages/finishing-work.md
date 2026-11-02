@@ -19,7 +19,7 @@ The file list is as tall as its files, up to about five rows, and scrolls beyond
 
 In Full view the list is a column on the left and the diff fills the right; drag the line between them to change the column's width. The list's height, the column's width and whether the list is collapsed all stay after a restart.
 
-To change a file, open it in your editor: **Open** on a file's row opens it at its first change; **Open in editor** above the diff opens it at the line you clicked in the diff, or at the first change. It uses the editor of the file's project. See [Open in editor](open-in-editor).
+To change a file, open it in your editor: **Open**, on a file's row when you hover or focus it, opens it at its first change; **Open in editor** above the diff opens it at the line you clicked in the diff, or at the first change. It uses the editor of the file's project. See [Open in editor](open-in-editor).
 
 ## Commit, Push, Create PR
 

@@ -315,6 +315,11 @@ export function EditProfileDialog({
                 onChange={(e) => setContinueAtStart(e.target.checked)}
               />
               Continue interrupted work when {BRAND.displayName} starts
+              <GuideLink
+                to="resume#continuing-it"
+                label="Continuing interrupted work"
+                before={onClose}
+              />
             </label>
             <label
               className="mt-2 block text-sm text-fg-muted"
