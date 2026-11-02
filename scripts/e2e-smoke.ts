@@ -3753,6 +3753,19 @@ exec sleep 600
         .eval<string>(`document.querySelector('#root')?.innerHTML.slice(0, 400) ?? 'no #root'`)
         .catch((e) => `unreadable: ${e}`);
       console.error(`#root: ${root}`);
+      // An open dialog's text and fields, and where the focus is: what a step waited on.
+      const dialog = await app.page
+        .eval<string>(`(() => {
+          const d = document.querySelector('dialog[open]');
+          const active = document.activeElement;
+          const focus = active ? active.tagName + (active.id ? '#' + active.id : '') : 'none';
+          if (!d) return 'no open dialog; focus: ' + focus;
+          const fields = [...d.querySelectorAll('input, textarea, select')]
+            .map((f) => (f.id || f.name || f.type) + '=' + JSON.stringify(f.value)).join(' ');
+          return d.innerText.replace(/\\s+/g, ' ').slice(0, 600) + '\\n  fields: ' + fields + '\\n  focus: ' + focus;
+        })()`)
+        .catch((e) => `unreadable: ${e}`);
+      console.error(`dialog: ${dialog}`);
       if (app.page.log.length > 0)
         console.error(`console:\n  ${app.page.log.slice(-15).join('\n  ')}`);
       if (app.page.errors.length > 0) {
