@@ -10,7 +10,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/dino-zecevic/relur?label=release)](https://github.com/dino-zecevic/relur/releases/latest)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-![macOS · Linux (beta)](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20(beta)-lightgrey)
+![macOS · Linux](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-lightgrey)
 
 <img src="docs/images/demo.gif" width="1100" alt="Relur at work: Claude's output streams into a workspace; ⌘N creates a workspace for ABC-160 and Claude starts in its worktree; another workspace asks for permission and the Work tab's badge counts it; ⌘J jumps there, the permission is given and it works again; it turns Done and ⇧⌘D shows its diff">
 
@@ -39,13 +39,13 @@ Or download the app: [Apple Silicon](https://github.com/dino-zecevic/relur/relea
 You also need [Claude Code](https://code.claude.com) (Relur offers to install it), a Claude plan and git.
 
 <details>
-<summary><b>Linux (beta)</b></summary>
+<summary><b>Linux</b></summary>
 
 <br>
 
 The same command installs the AppImage on Linux (x64 and arm64, glibc 2.31 or later). Or download it directly: AppImage [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.AppImage) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.AppImage), or `.deb` [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.deb) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.deb) for Debian and Ubuntu.
 
-Linux builds are tested in Docker, not yet on a real desktop. **On Ubuntu 23.10 and later, install the `.deb`:** it sets up Chromium's sandbox by itself. The AppImage works there too once listed for the sandbox; the install script prints the two commands. The AppImage needs `fuse3`. The app's Guide has a page on Linux.
+Linux builds are tested on Ubuntu 24.04 with GNOME, and in Docker. **On Ubuntu 23.10 and later, install the `.deb`:** it sets up Chromium's sandbox by itself. The AppImage works there too once listed for the sandbox; the install script prints the two commands. The AppImage needs `fuse3`. The app's Guide has a page on Linux.
 
 </details>
 

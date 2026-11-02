@@ -4,6 +4,10 @@ All notable changes to Relur. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Changed
+
+- Linux is no longer beta: Relur has been tested on Ubuntu 24.04 with GNOME. The `.deb` stays the recommended install on Ubuntu 23.10 and later.
+
 ## [0.2.0] - 2026-11-02
 
 ### Added

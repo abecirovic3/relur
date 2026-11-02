@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-An Electron desktop app (macOS first, Linux in beta) for running parallel Claude Code sessions, each in its own git worktree, with profiles that keep Claude accounts apart. React + Tailwind renderer, tRPC between renderer and main, SQLite for state.
+An Electron desktop app (macOS and Linux) for running parallel Claude Code sessions, each in its own git worktree, with profiles that keep Claude accounts apart. React + Tailwind renderer, tRPC between renderer and main, SQLite for state.
 
 ## Where things live
 
