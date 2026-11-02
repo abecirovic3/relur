@@ -350,7 +350,9 @@ Committing, pushing and Create PR are in the Changes panel (§14.1). A task link
 - When no workspace is selected, the terminal area shows the profile's home terminal (§6.7); when a project is selected, its main-checkout shells.
 - v1 uses tabs only; split panes come later.
 - The tab bar's right side holds the workspace's view buttons: Responses, Open in editor and Changes (§6.2).
-- Full xterm compatibility for Claude Code's interface (colors, mouse, bracketed paste) and clickable URLs. Scrollback search and clickable file paths aren't built yet.
+- Full xterm compatibility for Claude Code's interface (colors, mouse, bracketed paste) and clickable URLs.
+- **New line:** xterm sends ⇧↵ as a plain ↵, which Claude Code can't tell from Enter. Every terminal sends ⇧↵ as ESC ↵ instead, the sequence Claude Code reads as a new line in the prompt (as Option+Enter in terminals that send it), so ⇧↵ works without `/terminal-setup`. Shells and other programs read ESC ↵ as Alt+Enter.
+- **Delete line (macOS):** ⌘⌫ sends ⌃U, as other macOS terminals do: Claude Code's prompt and shells delete from the cursor to the start of the line. Linux and Windows keep Ctrl+Backspace for the terminal. Scrollback search and clickable file paths aren't built yet.
 - **Links:** plain URLs and OSC 8 hyperlinks (which Claude Code prints) open in the browser through the main process, http and https only, without xterm's confirmation dialog; anything else is ignored.
 - **Launch spinner:** while Claude launches (until its first output, at most about 3 seconds), its tab and the workspace's rows show the Working spinner. After that a workspace still in Starting shows no glyph until hooks report its state (§10.2).
 
@@ -403,6 +405,8 @@ The main table below lists the macOS keys.
 | ⌘T | New Shell tab | M0 |
 | ⌘W | Close terminal tab (Claude asks first; the home terminal stays). Close Window is ⇧⌘W | M1 |
 | ⌘⇧[ / ⌘⇧] | Move terminal tab | M5 |
+| ⇧↵ | New line in a terminal: Claude's prompt takes a new line (§6.3) | — |
+| ⌘⌫ | Delete to the start of the line in a terminal (macOS, §6.3) | — |
 | ⌘↑ / ⌘↓ | Previous / next prompt (§6.8) | M1 |
 | ⌥C | Copy the last response (§6.8) | M1 |
 | ⇧⌘R | Show or hide the Responses panel (§6.8) | M1 |
