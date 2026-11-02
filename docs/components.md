@@ -250,6 +250,9 @@ Spec §13.7. Edit profile › **Task lookup** (`ProfileLookupEditor` in `TaskLoo
 - On the right, 380px (360 below 900px window width), off by default. A `cursor-col-resize` edge (8px, `hover:bg-line-strong/60`, tooltip "Drag to resize; double-click for the default width") drags it between 360px and 75% of the workspace area; double-click resets it. The width is kept in local storage.
 - **Full view** (⇧⌘M): the panel fills the workspace area (the terminal and the Responses panel hidden, not stopped). The panel takes the focus when it changes size, so Esc reaches it: full view → side panel; Esc beside the terminal returns focus to the terminal.
 - **Header:** "Changes vs <base>", +/− totals, ghost sm **Full view** (`aria-pressed`; reads **Side panel** in full view; tooltips name ⇧⌘M and Esc), ×. Linked workspaces: "Changes · n repositories" and the totals across all of them.
+- **File list:** beside the terminal, above the diff; with no dragged height its `max-height` is about five rows (`5 × 26 + 34`px, linked `+ 96`px for the repository header and controls), so a short list is as tall as its files and a long one scrolls. Between list and diff a 1px `bg-line` divider with an 8px `cursor-row-resize` hit area (`hover:bg-line-strong/60`, tooltip "Drag to resize the file list; double-click for its default height"). A dragged list keeps its height (min 56px; the diff keeps 120px). In Full view the list is a column on the left (280px default, 180px to 50%), with the same divider standing (`cursor-col-resize`). Height, width and collapsed are kept in local storage.
+- **Group headers** ("Committed · n", "Uncommitted · n"; linked "Uncommitted n") are buttons with a 9px ▼: a click collapses the list (tooltip "Collapse the file list to one line").
+- **Collapsed list:** one 28px line (`bg-surface border-b-line pl-2 pr-1.5`): ▶ (9px `fg-muted`), the current file's kind letter and path (mono `text-sm`, ellipsized from the left; linked `<repo> · <path>`), the place `3/14` (mono `text-xs fg-subtle`), then **‹** and **›** `iconButton`s (tooltips "Previous file (⌥⌘↑)", "Next file (⌥⌘↓)"; disabled at the ends). Clicking the file part expands the list. In Full view the line sits above the diff and the column is hidden.
 - **File rows:** h-6.5, mono `text-sm`; kind letter M/A/D (amber/green/red, plus the letter itself), path ellipsized from the left, +n −n. Selected row: `bg-selected`.
 - **Open in editor:** on hover or keyboard focus within a file row, a small **Open** button at its right (`h-5.5 px-1.5 rounded-sm border-line-strong bg-raised text-xs text-fg-muted`, hover `fg`; tooltip "Open in editor, at its first change"); none on deleted files. The diff header has a ghost sm **Open in editor** (at the cursor line in the new side, else the first change).
 - **Diff header** (30px, `border-b-line px-3.5`): the path, ghost sm **Open in editor**, and the style switch: a segmented control (`fieldset`, `rounded-md border-line-strong p-px`) of **Unified** and **Side by side** (each `h-5 px-1.5 text-xs rounded-sm`; the chosen one `bg-raised font-medium text-fg`, the other `text-fg-muted`, `aria-pressed`). One app-wide setting, kept in local storage. When the diff is narrower than 640px, side by side shows unified with a line under the header (`bg-surface border-b-line px-3.5 py-1 text-xs text-fg-subtle`): "Too narrow for side by side: widen the panel or use Full view (⇧⌘M)".
@@ -260,7 +263,7 @@ Spec §13.7. Edit profile › **Task lookup** (`ProfileLookupEditor` in `TaskLoo
   - Groups "Committed n" (right: `↑n not pushed` or "pushed") and "Uncommitted n", 24px `text-xs font-semibold text-fg-subtle`, then the usual file rows. Empty groups are hidden; a repository without changes shows "No changes yet".
   - Controls row: Commit n → Push ↑n → Create PR, sm secondary buttons joined by `→`. Each is enabled only when it has something to do (Create PR needs pushed commits; tooltip names the missing step). With a PR, the last one reads "View PR #n". The buttons act on that repository only.
   - The file path row reads `<repo> · <path>`. ↑↓ move across sections.
-- **Keyboard:** ⌘⇧D toggles; ⇧⌘M toggles full view while open. With the panel focused, ↑↓ pick a file, Enter opens it in the editor, Esc leaves full view, else returns to the terminal. The toggles do nothing while a dialog is open.
+- **Keyboard:** ⌘⇧D toggles; ⇧⌘M toggles full view while open. ⌥⌘↑ / ⌥⌘↓ (Ctrl+Shift+Up / Down elsewhere) pick the previous and next file anywhere in the panel, the diff included. With the panel focused, ↑↓ pick a file, Enter opens it in the editor, Esc leaves full view, else returns to the terminal. The toggles do nothing while a dialog is open.
 
 ## Claude terminal decorations
 
@@ -533,6 +536,7 @@ Every built shortcut is defined once in `src/shared/shortcuts.ts` (key handlers,
 | Add project | ⌘O |
 | Toggle sidebar (rail) *(M5)* | ⌘\ |
 | Toggle changes panel | ⌘⇧D |
+| Changes panel: previous / next file (also in the diff) | ⌥⌘↑ / ⌥⌘↓ |
 | Continue the workflow; at a gate, put the Claude terminal in focus (was: advance lifecycle stage, superseded) | ⌘⇧↵ |
 | Terminal tab 1–9 | ⌃1 – ⌃9 |
 | Cycle terminal tabs | ⌃Tab / ⌃⇧Tab |

@@ -66,6 +66,15 @@ describe('shortcuts', () => {
     expect(formatShortcut(SHORTCUTS.responsesFullView, true)).toBe('⇧⌘F');
     expect(formatShortcut(SHORTCUTS.changesFullView, true)).toBe('⇧⌘M');
     expect(formatShortcut(SHORTCUTS.changesFullView, false)).toBe('Ctrl+Shift+M');
+    expect(formatShortcut(SHORTCUTS.changesFileStep, true)).toBe('⌥⌘↑ / ⌥⌘↓');
+    expect(formatShortcut(SHORTCUTS.changesFileStep, false)).toBe(
+      'Ctrl+Shift+Up / Ctrl+Shift+Down',
+    );
+    expect(
+      matchShortcut('changesFileStep', key('ArrowDown', { meta: true, alt: true }), true),
+    ).toBe(1);
+    // ⌥↓ alone stays the next workspace.
+    expect(matchShortcut('changesFileStep', key('ArrowDown', { alt: true }), true)).toBe(-1);
   });
 
   it("leaves the shell's keys to terminals on Linux (spec §6.6)", () => {
