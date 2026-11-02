@@ -384,7 +384,9 @@ async function main() {
       pr: { createCommand: 'gh pr create --fill' },
     });
 
-    // 7. Remove: once the project is gone; nothing on disk is deleted.
+    // 7. Remove: once the project is gone; nothing on disk is deleted. The
+    // project's menu names the profile: wait for the new name to reach the window.
+    await page.waitFor(`!!document.querySelector('[aria-label="Select Side"]')`, 'the new name');
     await chooseFromNextContextMenu(mainProcess, 'Remove from Side…');
     await openContextMenu(page, '[data-project="notes"] button:not([aria-label])');
     await page.waitFor(dialogOpen, 'the Remove project dialog');

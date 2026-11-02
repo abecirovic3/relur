@@ -17,3 +17,6 @@ xvfb-run -a npx tsx --tsconfig tsconfig.node.json scripts/e2e-onboarding.ts --de
 # Quitting and closing the window (on Linux closing quits, asking first).
 xvfb-run -a npx tsx --tsconfig tsconfig.node.json scripts/e2e-quit.ts
 xvfb-run -a npx tsx --tsconfig tsconfig.node.json scripts/e2e-quit.ts --dev
+# Continuing interrupted work after a restart (spec §9.7).
+xvfb-run -a npx tsx --tsconfig tsconfig.node.json scripts/e2e-continue.ts
+xvfb-run -a npx tsx --tsconfig tsconfig.node.json scripts/e2e-continue.ts --dev
