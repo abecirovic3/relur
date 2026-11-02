@@ -58,9 +58,14 @@ test ! -e "$installed" && test ! -e "$desktop" && test ! -e "/home/ubuntu/.local
 test -d "/home/ubuntu/.config/$cli"
 echo ok
 
-step "the .deb installs with apt and starts its self-test"
+# As in a distrobox or toolbox: no AppArmor profile can be loaded here, so
+# where the host restricts user namespaces (Ubuntu 23.10+), the .deb makes
+# chrome-sandbox setuid instead (spec §15.6). The release also tries the .deb
+# on the runner itself (scripts/linux-package-check-deb.sh).
+step "the .deb installs with apt in a container and starts its self-test"
 within 300 apt-get install -y -qq "$deb" >/dev/null
 test -x "/usr/bin/$exe"
+echo "chrome-sandbox: $(stat -c '%U %a' "$(dirname "$(readlink -f "/usr/bin/$exe")")/chrome-sandbox")"
 grep -qxF "StartupWMClass=$exe" "/usr/share/applications/$exe.desktop"
 within 300 "${as_user[@]}" xvfb-run -a "$exe" --self-test
 

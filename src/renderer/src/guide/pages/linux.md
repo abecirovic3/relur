@@ -38,7 +38,7 @@ Without FUSE, `~/Applications/{{app}}.AppImage --appimage-extract-and-run` start
 
 {{app}}'s windows run in Chromium's sandbox, which needs the user namespaces of the Linux kernel. {{app}} never turns the sandbox off. Ubuntu 23.10 and later let only listed apps use user namespaces:
 
-- **The `.deb`** lists itself when it's installed. On these systems it's the better choice.
+- **The `.deb`** lists itself when it's installed. On these systems it's the better choice. In a container such as distrobox or toolbox, where it can't list itself, it sets up Chromium's other sandbox, `chrome-sandbox`, instead.
 - **The AppImage** has to be listed once. The install script prints these commands when it's needed:
 
 ```

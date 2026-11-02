@@ -33,6 +33,7 @@ import './lib/clean-env';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { build, type CliOptions, type Configuration } from 'electron-builder';
 import { type Arch, BRAND, CHECKSUMS_FILE, releaseAsset } from '../src/shared/brand';
@@ -88,6 +89,26 @@ const RENDERER_ONLY = [
 /** releaseAsset(arch, ext) as an electron-builder name template. */
 const artifactName = (arch: Arch, ext: 'zip' | 'AppImage') =>
   releaseAsset(arch, ext).replace(new RegExp(`${ext}$`), '$' + '{ext}');
+
+/**
+ * The .deb's after-install script: electron-builder's own, then
+ * build/linux/after-install-sandbox.sh, which makes chrome-sandbox setuid
+ * where a user can't use the namespace sandbox (spec §15.6).
+ */
+function debAfterInstall(): string {
+  const templates = path.join(
+    path.dirname(require.resolve('app-builder-lib/package.json')),
+    'templates',
+    'linux',
+  );
+  const script = [
+    fs.readFileSync(path.join(templates, 'after-install.tpl'), 'utf8'),
+    fs.readFileSync(path.join(root, 'build', 'linux', 'after-install-sandbox.sh'), 'utf8'),
+  ].join('\n');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'deb-')), 'after-install.tpl');
+  fs.writeFileSync(file, script);
+  return file;
+}
 
 function config(arch: Arch): Configuration {
   const other = arch === 'arm64' ? 'x64' : 'arm64';
@@ -184,6 +205,7 @@ function config(arch: Arch): Configuration {
     appImage: { artifactName: artifactName(arch, 'AppImage') },
     deb: {
       artifactName: artifactName(arch, 'AppImage'),
+      afterInstall: platform === 'linux' ? debAfterInstall() : undefined,
       // electron-builder's own list, plus git, which worktrees need.
       depends: [
         'libgtk-3-0',

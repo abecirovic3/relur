@@ -51,6 +51,8 @@ jobs:
   # builds on its own runner, in Debian 11 for an old enough glibc (spec §15.6).
   linux:
     strategy:
+      # Each architecture's result counts on its own: one failing doesn't cancel the other.
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-24.04
@@ -76,6 +78,12 @@ jobs:
       - name: Try them on Ubuntu 24.04 (install.sh, self-test, sandbox, .deb)
         timeout-minutes: 30
         run: SKIP_BUILD=1 scripts/linux-package-check.sh
+
+      # The .deb as a user gets it: on the runner itself, where its
+      # after-install script can load its AppArmor profile (a container can't).
+      - name: Try the .deb on the runner (apt, self-test with the sandbox, remove)
+        timeout-minutes: 15
+        run: scripts/linux-package-check-deb.sh
 
       - uses: actions/upload-artifact@v7
         with:
