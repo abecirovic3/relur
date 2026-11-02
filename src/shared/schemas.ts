@@ -263,6 +263,8 @@ export const ConfigSchema = z
     ports: PortRangeSchema.optional(),
     /** macOS: closing the window quits instead of keeping the app running (spec §5). */
     quitOnWindowClose: z.boolean().optional(),
+    /** Check for Updates Automatically (spec §15.7); unset until the first-start question is answered. */
+    checkForUpdates: z.boolean().optional(),
   })
   .superRefine((config, ctx) => {
     const duplicates = (values: string[]) =>

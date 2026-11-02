@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { BRAND, envVar } from '@shared/brand';
 import { planLimitReached } from '@shared/unfinished';
+import { LATEST_RELEASE_URL } from '@shared/updates';
 import { parseRateLimits } from '@shared/usage';
 import { app, BrowserWindow, dialog, shell } from 'electron';
 import { HookBridge } from './bridge/server';
@@ -42,6 +43,8 @@ import { ElectronStatusPlatform } from './status/electron';
 import { StatusService } from './status/service';
 import { serveTrpcOverIpc } from './trpc/electron';
 import { UnfinishedService } from './unfinished/service';
+import { startUpdate } from './updates/install';
+import { skippedStore, UpdateService } from './updates/service';
 import { createMainWindow, devIconPath } from './window';
 import { TaskLookupService } from './workflow/lookup';
 import { WorkflowSetupService } from './workflow/propose';
@@ -202,6 +205,52 @@ function onWindowClose(win: BrowserWindow, event: Electron.Event): void {
   });
 }
 
+/**
+ * The latest release from the GitHub API (spec §15.7): no cookies or
+ * identifiers, only a User-Agent with the app's name and version. Tests point
+ * it at a fake endpoint with <PREFIX>UPDATE_URL.
+ */
+async function fetchLatestRelease(version: string): Promise<unknown> {
+  const override = process.env[envVar('UPDATE_URL')];
+  const url = override && /^https?:\/\//.test(override) ? override : LATEST_RELEASE_URL;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        'User-Agent': `${BRAND.displayName}/${version}`,
+        Accept: 'application/vnd.github+json',
+      },
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    const code = (error as { cause?: { code?: string } }).cause?.code;
+    throw new Error(`GitHub couldn't be reached${code ? ` (${code})` : ''}`);
+  }
+  if (response.status === 404) throw new Error('GitHub has no release yet');
+  if (!response.ok) throw new Error(`GitHub answered ${response.status} ${response.statusText}`);
+  return response.json();
+}
+
+/** Check for Updates… (spec §15.7): the notice when there is a newer version, else a message. */
+async function checkForUpdatesNow(updates: UpdateService): Promise<void> {
+  const result = await updates.check({ manual: true });
+  showMainWindow();
+  if (result.kind === 'newer') return;
+  const options = {
+    type: result.kind === 'failed' ? ('warning' as const) : ('info' as const),
+    message:
+      result.kind === 'failed'
+        ? "Couldn't check for updates"
+        : `${BRAND.displayName} ${app.getVersion()} is the latest version`,
+    detail: result.kind === 'failed' ? result.reason : undefined,
+    buttons: ['OK'],
+  };
+  if (mainWindow) await dialog.showMessageBox(mainWindow, options);
+  else await dialog.showMessageBox(options);
+}
+
 /** Once, after the settings were copied: where the old folder still is (spec §3.5). */
 function showMigrationNotice(dataDir: string): void {
   const from = pendingNotice(dataDir);
@@ -263,11 +312,32 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     env = new EnvService(config);
 
     installSecurityPolicies();
-    const menuRequests = new EventEmitter();
-    installAppMenu(config, (what) => {
-      showMainWindow();
-      menuRequests.emit('request', what);
+    // New versions (spec §15.7): only after the user agreed, and never in the self-test.
+    const skipped = skippedStore(dataDir);
+    const updates = new UpdateService({
+      version: app.getVersion(),
+      fetchLatest: () => fetchLatestRelease(app.getVersion()),
+      automatic: () => (isSelfTest ? false : config.get().config?.checkForUpdates),
+      setAutomatic: (on) =>
+        config.update((raw) => {
+          raw.checkForUpdates = on;
+        }),
+      skipped: skipped.get,
+      setSkipped: skipped.set,
     });
+    atShutdown(() => updates.dispose());
+    const menuRequests = new EventEmitter();
+    installAppMenu(
+      config,
+      (what) => {
+        showMainWindow();
+        menuRequests.emit('request', what);
+      },
+      {
+        setAutomatic: (on) => updates.setAutomatic(on),
+        checkNow: () => void checkForUpdatesNow(updates),
+      },
+    );
     const workspaceRecords = new WorkspaceRecords(db);
     // Workspace states from hooks (spec §10), their alerts and the Dock badge.
     statusPlatform = new ElectronStatusPlatform(config);
@@ -426,6 +496,19 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       editors,
       quit: { asker: quitAsker, answer: (quit: boolean) => answerQuit?.(quit) },
       unfinished: continuing,
+      updates: {
+        service: updates,
+        // The terminal gets the user's login environment, not the app's (AppImage paths included).
+        update: async (release) =>
+          startUpdate(release, {
+            platform: process.platform,
+            arch: process.arch,
+            appImage: Boolean(process.env.APPIMAGE),
+            packaged: app.isPackaged,
+            env: (await env.login()).env,
+            terminal: process.env[envVar('UPDATE_TERMINAL')],
+          }),
+      },
       closeNotice: {
         asker: closeNoticeAsker,
         answer: (close: boolean) => answerCloseNotice?.(close),
@@ -452,6 +535,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     });
     showMainWindow();
     showMigrationNotice(dataDir);
+    updates.start();
     // Claude resumes where it ran (spec §9.4); then interrupted work is
     // continued or asked about (§9.7).
     void continuing.atLaunch(workspaces.resumeAtLaunch());

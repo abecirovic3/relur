@@ -35,7 +35,7 @@ import { type Block, type ParsedPage, parsePage, plainText } from './markdown';
 export const SECTIONS: { title: string; pages: string[] }[] = [
   {
     title: 'Getting started',
-    pages: ['what-it-is', 'building-blocks', 'first-steps', 'team-setup', 'linux'],
+    pages: ['what-it-is', 'building-blocks', 'first-steps', 'team-setup', 'linux', 'updates'],
   },
   {
     title: 'Profiles and accounts',

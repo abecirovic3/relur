@@ -236,6 +236,7 @@ Profile 1──* Project 1──* Workspace 1──* Session
 | Skill sources | Git sources are cloned into `skill-sources/<profile>/<source>` in the app config dir, and plain skill folders are wrapped in a generated plugin in `plugins/<profile>/<source>` there (§13.2). Local folders stay where they are. |
 | Runtime state (workspaces, sessions, usage snapshots) | `state.db` (SQLite) in the app config dir |
 | Notices shown once ever (closing the window, §5) | `notices.json` in the app config dir: each notice's id and when it was shown |
+| The version the user skipped (§15.7) | `updates.json` in the app config dir; whether to check for updates is `checkForUpdates` in `config.json` |
 | Per-repo, committable config | `.relur/config.json` and `.worktreeinclude` in the repository (§8) |
 | Credentials | None. Relur stores no tokens or API keys; commands rely on the user's own CLI logins and environment (§12.4). Claude logins belong to Claude Code alone (decision D12). |
 
@@ -1123,6 +1124,21 @@ GUI apps on macOS, and on some Linux desktops, don't inherit the shell's `PATH`.
 - **Checks:** `scripts/linux-check.sh` (Docker, Debian 12) runs the typecheck, the unit tests (with bash, zsh and fish, a D-Bus session bus for the launcher badge, and `install.sh` on Linux with a stand-in AppImage), the self-test and both e2e suites on the production build and the dev server, with Chromium's sandbox on (the container gets user namespaces, `seccomp=unconfined`). On Linux the e2e also checks that no view shows ⌘ ⌥ ⇧ ⌃, Finder or the Dock, that the tooltips show the Linux keys, and that closing the window asks and Cancel keeps it. `scripts/linux-package-check.sh` builds the packages and tries them on a plain Ubuntu 24.04 (fuse3 only): `install.sh --from` (desktop entry, icons, launcher running the helper), the installed AppImage's self-test over FUSE and with `--appimage-extract-and-run`, its window's `WM_CLASS` against `StartupWMClass` and its renderers and their zygote in a user namespace of their own (the sandbox is on; the browser process is found by its command line's first word, whatever follows), `--uninstall`, then the `.deb` through `apt` inside the container, as in a distrobox, and its self-test, printing `chrome-sandbox`'s owner and mode. The packaged self-test also runs the helper. With `PLATFORM=linux/amd64` on an arm64 Mac it runs under Docker's emulation, where the kernel refuses AppImages (qemu's binfmt rule expects zeros where the ELF header carries AppImage's magic bytes), so the check zeroes them in a copy; the release runs it natively on both architectures. Every step has a time limit, so an app that hangs or crashes fails the step with what it printed instead of hanging the job.
 - **Wayland and X11:** Electron's default: Wayland on a Wayland session, else X11. `--ozone-platform=x11` forces X11 when something misbehaves (Guide).
 
+### 15.7 New versions
+
+The app tells the user when a new version is out and updates in one step, without making requests the user didn't agree to and without replacing itself.
+
+- **Asking first:** while `checkForUpdates` isn't set in `config.json` (a new install, or the first start of a version with this feature), a bar under the tabs asks: "Check for new versions of Relur? Relur asks GitHub about its latest release once a day. Nothing about you or your work is sent." **Check for updates** sets it to `true`, **No thanks** to `false`; nothing is sent before. It is a bar, not a dialog, so it never covers the New profile wizard or another dialog. The self-test never checks.
+- **The menu:** **Check for Updates…** and the checkbox **Check for Updates Automatically** (`checkForUpdates`), after About in the Relur menu on macOS and in Help on Linux. Check for Updates… asks now, whatever the setting: a newer version shows the notice (even a skipped one); otherwise a message box says "Relur 0.1.0 is the latest version", or "Couldn't check for updates" with the reason.
+- **The check:** `GET https://api.github.com/repos/<owner>/<repo>/releases/latest` (from `BRAND.github`), with `User-Agent: Relur/<version>` and `Accept: application/vnd.github+json`, no cookies or other headers, a 15 s timeout. At start and every 24 hours while the app runs, while the setting is on. Drafts, pre-releases and tags that aren't a plain `x.y.z` are ignored; versions compare by number. A failure of an automatic check stays quiet. `<PREFIX>UPDATE_URL` points it elsewhere for tests.
+- **The notice:** a bar under the tabs, not a dialog: "Relur 0.2.0 is available" ("you have 0.1.0"), with **Update**, **Release notes** (the release page in the browser), **Skip this version** (kept in `updates.json` in the app config dir; a newer version, or Check for Updates…, shows it again) and × (hidden until the next check).
+- **Update:** never downloads or replaces the app by itself, and never runs sudo.
+  - macOS, and the AppImage on Linux: opens the user's terminal running the README's install command (§15.4): Terminal.app on macOS (through `osascript`); on Linux the first of `x-terminal-emulator`, `gnome-terminal` and `konsole` on the login shell's PATH, in its own session with the login shell's environment (not the AppImage's), kept open at the end. The install command asks before it quits the app, installs, and offers to open it again. The bar says a terminal opened.
+  - No terminal found (or it didn't open): the bar shows the command with Copy.
+  - A `.deb` install (Linux, packaged, not an AppImage): the bar shows the new `.deb`'s download link (from the release's assets, for this architecture) and the command `cd /tmp && curl -fLO <link> && sudo apt install ./Relur-linux-<arch>.deb` with Copy, for the user to run.
+- **Release notes:** `CHANGELOG.md` at the repository root (Keep a Changelog), with an Unreleased section; the release workflow publishes the tag's section as the GitHub release notes (`scripts/changelog-notes.mjs`) and fails without one.
+- **Tests:** unit tests for comparing versions, pre-releases and drafts, skipping, the interval and the quiet failure (`src/shared/updates.test.ts`, `src/main/updates/service.test.ts`); `scripts/e2e-updates.ts` with a fake release endpoint: the first-start question, the notice, Skip, Release notes, Update without a terminal, and the menu items.
+
 ---
 
 ## 16. Architecture
@@ -1156,7 +1172,7 @@ flowchart LR
 | **Command runner** | Runs the user-defined task-source and PR commands with the profile environment, enforces timeouts and parses their JSON (§12.4). |
 | **Store** | §3.4. |
 
-Relur's own code makes no network requests other than to its local hook bridge. Everything external goes through git, Claude Code or user commands; the Claude Code installer (§6.11) is a command the user starts in a visible terminal.
+Relur's own code makes no network requests other than to its local hook bridge, and, only when the user agreed to it, the daily check for new versions (§15.7): one GET to GitHub's API, with no cookies or identifiers. Everything external goes through git, Claude Code or user commands; the Claude Code installer (§6.11) is a command the user starts in a visible terminal, and so is an update.
 
 ---
 

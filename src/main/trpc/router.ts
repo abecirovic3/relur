@@ -11,6 +11,7 @@ import {
   TaskLookupSchema,
   WorkflowSchema,
 } from '@shared/schemas';
+import type { Release } from '@shared/updates';
 import { parseWorkflowFile, WORKFLOW_FILE, workflowFileText } from '@shared/workflow-file';
 import { workspaceRepo } from '@shared/workspaces';
 import { app, BrowserWindow, clipboard, dialog, nativeTheme, shell, webContents } from 'electron';
@@ -41,6 +42,8 @@ import type { SkillService } from '../skills/service';
 import type { ElectronStatusPlatform } from '../status/electron';
 import type { Alert, ConversationEvent, StatusService } from '../status/service';
 import type { UnfinishedService } from '../unfinished/service';
+import type { UpdateAction } from '../updates/install';
+import type { UpdateService } from '../updates/service';
 import type { WorkflowSetupService } from '../workflow/propose';
 import type { WorkflowService } from '../workflow/service';
 import type { NewWorktree, WorktreeNotices } from '../worktrees/notices';
@@ -73,6 +76,8 @@ export interface Services {
   helper: string | null;
   /** Continuing interrupted work (spec §9.7). */
   unfinished: UnfinishedService;
+  /** New versions (spec §15.7): the service, and Update for this installation. */
+  updates: { service: UpdateService; update: (release: Release) => Promise<UpdateAction> };
   /** The quit dialog: requests with busy session ids, and the user's answer. */
   quit: { asker: EventEmitter; answer: (quit: boolean) => void };
   /** The notice when the window first closes and the app keeps running (spec §5). */
@@ -108,6 +113,7 @@ export function createAppRouter({
   quit,
   closeNotice,
   unfinished,
+  updates,
 }: Services) {
   const host = terminals.host;
   const sessionId = z.object({ sessionId: z.string().min(1) });
@@ -940,6 +946,27 @@ export function createAppRouter({
         .mutation(({ input }) => host.resize(input.sessionId, input.cols, input.rows)),
       stop: publicProcedure.input(sessionId).mutation(({ input }) => host.stop(input.sessionId)),
       close: publicProcedure.input(sessionId).mutation(({ input }) => host.remove(input.sessionId)),
+    }),
+
+    /** New versions (spec §15.7). */
+    updates: router({
+      /** The first-start question and the notice. */
+      state: publicProcedure.query(() => updates.service.state()),
+      changes: publicProcedure.subscription(({ signal }) =>
+        fromListener((listener) => updates.service.onChange(() => listener(true)), signal),
+      ),
+      /** Check for updates or No thanks. */
+      answer: publicProcedure
+        .input(z.object({ check: z.boolean() }))
+        .mutation(({ input }) => updates.service.answer(input.check)),
+      skip: publicProcedure.mutation(() => updates.service.skip()),
+      dismiss: publicProcedure.mutation(() => updates.service.dismiss()),
+      /** Opens the user's terminal with the install command, or says what to run. */
+      update: publicProcedure.mutation(() => {
+        const release = updates.service.state().available;
+        if (!release) throw new Error('There is no newer version to install');
+        return updates.update(release);
+      }),
     }),
 
     /** Work the app's stop interrupted (spec §9.7). */

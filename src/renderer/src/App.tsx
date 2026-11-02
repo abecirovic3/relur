@@ -31,6 +31,7 @@ import { SetupCheckPanel } from './components/SetupCheck';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { ContinueNotice, UnfinishedDialog } from './components/UnfinishedDialog';
+import { UpdateNotice } from './components/UpdateNotice';
 import { FOCUS_CLAUDE_EVENT, WorkspaceView } from './components/WorkspaceView';
 import { type GuideTarget, GuideView, target } from './guide/GuideView';
 import { GuideContext } from './guide/link';
@@ -694,6 +695,7 @@ export function App() {
           />
           {config.data?.error ? <ConfigError error={config.data.error} /> : null}
           <SandboxWarning />
+          <UpdateNotice />
           <div className="flex min-h-0 flex-1 overflow-hidden">
             {guide.open ? (
               <GuideView

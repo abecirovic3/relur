@@ -7,10 +7,20 @@ import type { ConfigStore } from './config/store';
 /** A menu item the renderer handles with its own dialog. */
 export type MenuRequest = 'install-cli' | 'close-tab' | 'guide';
 
-export function installAppMenu(config: ConfigStore, request: (what: MenuRequest) => void): void {
-  build(config, request);
-  // The checkbox follows config.json, also after Reload Config.
-  config.onChange(() => build(config, request));
+/** The menu's update items (spec §15.7). */
+export interface MenuUpdates {
+  setAutomatic: (on: boolean) => void;
+  checkNow: () => void;
+}
+
+export function installAppMenu(
+  config: ConfigStore,
+  request: (what: MenuRequest) => void,
+  updates: MenuUpdates,
+): void {
+  build(config, request, updates);
+  // The checkboxes follow config.json, also after Reload Config.
+  config.onChange(() => build(config, request, updates));
 }
 
 function setQuitOnClose(config: ConfigStore, quit: boolean): void {
@@ -27,7 +37,11 @@ function setQuitOnClose(config: ConfigStore, quit: boolean): void {
   }
 }
 
-function build(config: ConfigStore, request: (what: MenuRequest) => void): void {
+function build(
+  config: ConfigStore,
+  request: (what: MenuRequest) => void,
+  updates: MenuUpdates,
+): void {
   const template = menuTemplate({
     isMac: process.platform === 'darwin',
     // Set by electron-vite's dev server only (see window.ts).
@@ -37,6 +51,7 @@ function build(config: ConfigStore, request: (what: MenuRequest) => void): void 
     quitOnClose: config.get().config?.quitOnWindowClose === true,
     setQuitOnClose: (quit) => setQuitOnClose(config, quit),
     request,
+    updates: { ...updates, automatic: config.get().config?.checkForUpdates === true },
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -50,6 +65,8 @@ interface MenuOptions {
   quitOnClose: boolean;
   setQuitOnClose: (quit: boolean) => void;
   request: (what: MenuRequest) => void;
+  /** Check for Updates… and Check for Updates Automatically (spec §15.7). */
+  updates?: MenuUpdates & { automatic: boolean };
 }
 
 /**
@@ -66,7 +83,20 @@ export function menuTemplate({
   quitOnClose,
   setQuitOnClose,
   request,
+  updates,
 }: MenuOptions): MenuItemConstructorOptions[] {
+  // In the app menu on macOS, in Help elsewhere.
+  const updateItems: MenuItemConstructorOptions[] = updates
+    ? [
+        { label: 'Check for Updates…', click: () => updates.checkNow() },
+        {
+          label: 'Check for Updates Automatically',
+          type: 'checkbox',
+          checked: updates.automatic,
+          click: (item) => updates.setAutomatic(item.checked),
+        },
+      ]
+    : [];
   // The command line tool for other terminals (spec §7.5); the renderer confirms first.
   const installCli: MenuItemConstructorOptions = {
     label: 'Install Command Line Tool…',
@@ -79,6 +109,7 @@ export function menuTemplate({
             label: BRAND.displayName,
             submenu: [
               { role: 'about' },
+              ...updateItems,
               { type: 'separator' },
               installCli,
               { type: 'separator' },
@@ -165,7 +196,7 @@ export function menuTemplate({
     {
       role: 'help',
       submenu: [
-        ...(isMac ? [] : ([{ role: 'about' }, { type: 'separator' }] as const)),
+        ...(isMac ? [] : ([{ role: 'about' }, ...updateItems, { type: 'separator' }] as const)),
         {
           label: `${BRAND.displayName} Guide`,
           // The window handles the key itself (it works in terminals too); the menu shows it.
