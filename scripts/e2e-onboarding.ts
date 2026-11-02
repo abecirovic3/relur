@@ -1,7 +1,8 @@
 /**
  * End-to-end test of onboarding (spec §6.11): first launch, the New profile
  * wizard with each account choice, the setup check and its gate, Edit and
- * Remove profile. Runs with a throwaway HOME and a fake `claude`.
+ * Remove profile, and the warning bar when Chromium's sandbox is off. Runs
+ * with a throwaway HOME and a fake `claude`.
  *
  *   tsx scripts/e2e-onboarding.ts [--dev] [--screenshots=<dir>] [extra Electron args…]
  *
@@ -179,6 +180,11 @@ async function main() {
     page = app.page;
     const mainProcess = app.main;
     await page.waitFor(`!document.querySelector('[data-setup-warning]')`, 'Work to pass its check');
+    // Chromium's sandbox is on: no warning bar (spec §15.6).
+    assert.equal(
+      await page.eval<boolean>(`!!document.querySelector('[data-sandbox-warning]')`),
+      false,
+    );
 
     // Choose another folder… goes through the native panel; only the panel is replaced.
     await mainProcess.eval(`(() => {
@@ -431,6 +437,27 @@ async function main() {
     );
     assert.deepEqual(profiles(), []);
     await screenshot(page, screenshotDir, 'o7-welcome-again.png');
+
+    // 9. Started without Chromium's sandbox (as electron-builder's AppImage
+    // launcher does when user namespaces are refused): the window says so, and
+    // links to the Guide's sandbox section (spec §15.6).
+    await app.stop();
+    app = undefined;
+    app = await launchApp({ env, dev: devMode, electronArgs: [...electronArgs, '--no-sandbox'] });
+    page = app.page;
+    const bar = `document.querySelector('[data-sandbox-warning]')`;
+    await page.waitFor(
+      `${bar}?.innerText.includes("Running without Chromium's sandbox")`,
+      'the bar',
+    );
+    assert.match(await page.eval<string>(`${bar}.innerText`), /started with --no-sandbox/);
+    await clickButtonText(page, 'How to turn it on', bar);
+    await page.waitFor(
+      `document.querySelector('[data-guide-article]')?.dataset.guideArticle === 'linux'`,
+      "the Guide's Linux page",
+    );
+    assert.ok(await page.eval<boolean>(`!!document.querySelector('[data-sec="the-sandbox"]')`));
+    await screenshot(page, screenshotDir, 'o8-no-sandbox.png');
 
     console.log(`e2e onboarding test passed (${devMode ? 'dev server' : 'production build'})`);
   } catch (error) {

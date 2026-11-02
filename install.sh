@@ -37,7 +37,7 @@ DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 DESKTOP_FILE="$DATA/applications/$LINUX_EXE.desktop"
 DESKTOP_MARK="# $APP desktop entry"
 
-say() { printf '%s\n' "$*"; }
+say() { printf '%s\n' "$@"; }
 usage() {
   cat <<USAGE
 Installs or updates $APP from the latest release, and points the command line
@@ -224,13 +224,20 @@ linux_notes() {
       "Or start it without FUSE: \"$1\" --appimage-extract-and-run"
   fi
   # Ubuntu 23.10 and later: Chromium's sandbox needs user namespaces, which
-  # AppArmor allows only to listed programs. The app never turns the sandbox off.
+  # AppArmor allows only to listed programs. The .deb lists itself. The
+  # AppImage's profile covers its AppRun too: AppRun (electron-builder's) adds
+  # --no-sandbox when `unshare -Ur true` fails, and the programs a profile in
+  # unconfined mode starts stay in it. The app never turns the sandbox off.
+  apparmor="/etc/apparmor.d/$LINUX_EXE-appimage"
   if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = 1 ] &&
-    [ ! -e "/etc/apparmor.d/$LINUX_EXE-appimage" ]; then
-    say "" "This system lets only listed apps use the sandbox $APP runs in. List the AppImage once:" \
-      "  printf '%s\\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile $LINUX_EXE-appimage /tmp/{.mount_*,appimage_extracted_*}/$LINUX_EXE flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/$LINUX_EXE-appimage" \
-      "  sudo apparmor_parser -r /etc/apparmor.d/$LINUX_EXE-appimage" \
-      "Or install the .deb instead, which does this itself."
+    ! grep -qs AppRun "$apparmor"; then
+    deb="$APP-linux-$(cpu_arch).deb"
+    say "" "This system lets only listed apps use the sandbox $APP runs in. The .deb sets that up" \
+      "by itself, so it's the better choice here (then remove the AppImage with --uninstall):" \
+      "  curl -fLO $BASE_URL/$deb && sudo apt install ./$deb" \
+      "To keep the AppImage instead, list it once:" \
+      "  printf '%s\\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile $LINUX_EXE-appimage /tmp/{.mount_*,appimage_extracted_*}/{AppRun,$LINUX_EXE} flags=(unconfined) {' '  userns,' '}' | sudo tee $apparmor" \
+      "  sudo apparmor_parser -r $apparmor"
   fi
   if [ -x "/opt/$APP/$LINUX_EXE" ]; then
     say "" "The .deb of $APP is installed too, in /opt/$APP, so the app list shows it twice. Keep one: sudo apt remove relur"

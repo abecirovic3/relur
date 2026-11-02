@@ -12,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/{{repo}}/main/install.sh | sh
 
 Running it again updates {{app}}; `sh install.sh --uninstall` removes it and keeps your settings in `{{configDir}}`. There are no automatic updates.
 
-On Debian and Ubuntu you can install the `.deb` from the release instead (`sudo apt install ./{{app}}-linux-x64.deb`). It installs to `/opt/{{app}}`, needs no FUSE, and sets up the sandbox on Ubuntu 24.04 by itself. Updates are the same: install the newer `.deb`. **Install Command Line Tool…** in the **File** menu adds the `{{cli}}` command. Use one of the two, not both.
+On Debian and Ubuntu you can install the `.deb` from the release instead (`sudo apt install ./{{app}}-linux-x64.deb`). It installs to `/opt/{{app}}`, needs no FUSE, and sets up the sandbox by itself. **On Ubuntu 23.10 and later, use the `.deb`:** the AppImage works there too, but only after you list it for the sandbox once (see [The sandbox](linux#the-sandbox)). Updates are the same: install the newer `.deb`. **Install Command Line Tool…** in the **File** menu adds the `{{cli}}` command. Use one of the two, not both.
 
 ## What's different from macOS
 
@@ -32,12 +32,23 @@ On Debian and Ubuntu you can install the `.deb` from the release instead (`sudo 
 
 Without FUSE, `~/Applications/{{app}}.AppImage --appimage-extract-and-run` starts it too, a little slower.
 
-**It mentions the sandbox ("chrome-sandbox", "SUID sandbox").** Ubuntu 23.10 and later only let listed apps use the user namespaces that Chromium's sandbox needs. {{app}} never turns the sandbox off. Use the `.deb`, which lists itself, or list the AppImage once (the install script prints these commands when it's needed):
+**It mentions the sandbox ("chrome-sandbox", "SUID sandbox").** See [The sandbox](linux#the-sandbox).
+
+## The sandbox
+
+{{app}}'s windows run in Chromium's sandbox, which needs the user namespaces of the Linux kernel. {{app}} never turns the sandbox off. Ubuntu 23.10 and later let only listed apps use user namespaces:
+
+- **The `.deb`** lists itself when it's installed. On these systems it's the better choice.
+- **The AppImage** has to be listed once. The install script prints these commands when it's needed:
 
 ```
-printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile {{linuxExe}}-appimage /tmp/{.mount_*,appimage_extracted_*}/{{linuxExe}} flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/{{linuxExe}}-appimage
+printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile {{linuxExe}}-appimage /tmp/{.mount_*,appimage_extracted_*}/{AppRun,{{linuxExe}}} flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/{{linuxExe}}-appimage
 sudo apparmor_parser -r /etc/apparmor.d/{{linuxExe}}-appimage
 ```
+
+If you listed the AppImage with an earlier version of these commands, run them again: the AppImage's launcher (`AppRun`) has to be listed too.
+
+Without the listing, the AppImage's launcher starts {{app}} with `--no-sandbox`. {{app}} then shows a bar at the top of the window, **Running without Chromium's sandbox**, until it starts with the sandbox on. Add the listing or install the `.deb`, then quit {{app}} and start it again.
 
 ## Keys that do nothing
 

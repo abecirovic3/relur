@@ -26,6 +26,7 @@ import {
 import { installAppMenu } from './menu';
 import { markShown, wasShown } from './notices';
 import { appConfigDir, contractHome } from './paths';
+import { chromiumSandboxOff } from './sandbox';
 import { installSecurityPolicies } from './security';
 import { isSelfTest, runSelfTest } from './self-test';
 import { CliLinkService } from './services/cli-link';
@@ -123,6 +124,9 @@ async function selfTestCheck(): Promise<string | null> {
       return `${helperForSelfTest} --version failed: ${String(error)}`;
     }
   }
+  // The sandbox stays on (spec §15.6): an AppImage started without it fails here.
+  const sandbox = chromiumSandboxOff();
+  if (sandbox) return `Chromium's sandbox is off: ${sandbox}`;
   const diagnostics = await env.diagnostics();
   if (diagnostics.source !== 'login-shell') return `login shell env: ${diagnostics.error}`;
   if (!diagnostics.git) return 'git not found on the login shell PATH';

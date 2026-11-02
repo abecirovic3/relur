@@ -26,6 +26,7 @@ import { ProjectView } from './components/ProjectView';
 import { QuitDialog } from './components/QuitDialog';
 import { RemoveProfileDialog } from './components/RemoveProfileDialog';
 import { RemoveProjectDialog } from './components/RemoveProjectDialog';
+import { SandboxWarning } from './components/SandboxWarning';
 import { SetupCheckPanel } from './components/SetupCheck';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
@@ -683,6 +684,7 @@ export function App() {
             }}
           />
           {config.data?.error ? <ConfigError error={config.data.error} /> : null}
+          <SandboxWarning />
           <div className="flex min-h-0 flex-1 overflow-hidden">
             {guide.open ? (
               <GuideView

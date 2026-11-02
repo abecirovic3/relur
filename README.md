@@ -48,7 +48,7 @@ You also need [Claude Code](https://code.claude.com) (Relur offers to install it
 
 The same command installs the AppImage on Linux (x64 and arm64, glibc 2.31 or later). Or download it directly: AppImage [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.AppImage) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.AppImage), or `.deb` [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.deb) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.deb) for Debian and Ubuntu.
 
-Linux builds are tested in Docker, not yet on a real desktop. The AppImage needs `fuse3`; on Ubuntu 23.10 and later the install script prints two commands for Chromium's sandbox (the `.deb` sets that up itself). The app's Guide has a page on Linux.
+Linux builds are tested in Docker, not yet on a real desktop. **On Ubuntu 23.10 and later, install the `.deb`:** it sets up Chromium's sandbox by itself. The AppImage works there too once listed for the sandbox; the install script prints the two commands. The AppImage needs `fuse3`. The app's Guide has a page on Linux.
 
 </details>
 

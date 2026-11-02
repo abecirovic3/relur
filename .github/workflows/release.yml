@@ -65,7 +65,16 @@ jobs:
       - name: Build the AppImage and .deb
         run: VERSION="${GITHUB_REF_NAME#v}" scripts/linux-package.sh
 
+      # Ubuntu 24.04 lets only programs with an AppArmor profile use user
+      # namespaces, which Chromium's sandbox needs, and the check's container
+      # shares this runner's kernel. Set the runner up as a user does after
+      # install.sh's notes, and prove the profile works (spec §15.4).
+      - name: Follow install.sh's AppArmor notes, as a user does
+        timeout-minutes: 10
+        run: scripts/linux-package-check-host.sh
+
       - name: Try them on Ubuntu 24.04 (install.sh, self-test, sandbox, .deb)
+        timeout-minutes: 30
         run: SKIP_BUILD=1 scripts/linux-package-check.sh
 
       - uses: actions/upload-artifact@v7

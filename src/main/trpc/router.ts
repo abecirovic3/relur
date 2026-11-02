@@ -28,6 +28,7 @@ import type { EditorService } from '../editor/service';
 import type { EnvService } from '../env/service';
 import type { MenuRequest } from '../menu';
 import { contractHome, expandHome } from '../paths';
+import { chromiumSandboxOff } from '../sandbox';
 import { openExternalSafe } from '../security';
 import type { CliLinkEvent, CliLinkService } from '../services/cli-link';
 import type { ProfileService } from '../services/profiles';
@@ -119,6 +120,8 @@ export function createAppRouter({
         platform: process.platform,
         configDir: app.getPath('userData'),
       })),
+      /** Why Chromium's sandbox is off, or null; the window warns (spec §15.6). */
+      sandboxOff: publicProcedure.query(() => chromiumSandboxOff()),
       /** Quitting would interrupt these sessions; the window asks (spec §5). */
       quitRequests: publicProcedure.subscription(({ signal }) =>
         fromListener<string[]>((listener) => {
