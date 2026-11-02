@@ -156,7 +156,7 @@ No. Relur is an independent open-source project, not affiliated with or endorsed
 
 ## Contributing
 
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for building from source and the tests, [SECURITY.md](SECURITY.md) for reporting vulnerabilities, and [docs/SPEC.md](docs/SPEC.md) for the full specification.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for building from source and the tests, [SECURITY.md](.github/SECURITY.md) for reporting vulnerabilities, and [docs/SPEC.md](docs/SPEC.md) for the full specification.
 
 ## License
 

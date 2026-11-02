@@ -1,7 +1,8 @@
 /**
  * Fails when the product name, or its previous one (BRAND.legacy), appears
  * outside src/shared/brand.ts, so a rename stays a one-file change. Docs and
- * README/LICENSE/CHANGELOG/CONTRIBUTING/SECURITY/CODE_OF_CONDUCT files are exempt.
+ * the README, LICENSE and CHANGELOG, and .github's CONTRIBUTING, SECURITY and
+ * CODE_OF_CONDUCT are exempt.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -13,7 +14,8 @@ const EXEMPT: RegExp[] = [
   /^docs\//,
   // Generated from scripts/install.template.sh with BRAND (scripts/gen-install.ts).
   /^install\.sh$/,
-  /(^|\/)(README|LICENSE|CHANGELOG|CONTRIBUTING|SECURITY|CODE_OF_CONDUCT)[^/]*$/i,
+  /^(README\.md|LICENSE|CHANGELOG\.md)$/,
+  /^\.github\/(CONTRIBUTING|SECURITY|CODE_OF_CONDUCT)\.md$/,
 ];
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

@@ -1,6 +1,6 @@
 # Contributing to Relur
 
-Thanks for your interest. Issues and pull requests are welcome: bug reports, fixes, documentation, and features that fit the [specification](docs/SPEC.md).
+Thanks for your interest. Issues and pull requests are welcome: bug reports, fixes, documentation, and features that fit the [specification](../docs/SPEC.md).
 
 ## Setup
 
@@ -17,7 +17,7 @@ npm run dev
 
 A new git worktree of this repository has no `node_modules`: run `npm ci` there first.
 
-[CLAUDE.md](CLAUDE.md) describes where things live in the code and the conventions to follow.
+[CLAUDE.md](../CLAUDE.md) describes where things live in the code and the conventions to follow.
 
 ## Scripts
 
@@ -38,7 +38,7 @@ Pushing a version tag runs `.github/workflows/release.yml`, which builds and pub
 ## Rules for a change
 
 - **`npm run verify` passes** before you open a pull request. The e2e tests use a fake `claude`, never the real one.
-- **The spec is the source of truth.** A change in behaviour updates [docs/SPEC.md](docs/SPEC.md) in the same pull request, with e2e coverage of the new behaviour.
+- **The spec is the source of truth.** A change in behaviour updates [docs/SPEC.md](../docs/SPEC.md) in the same pull request, with e2e coverage of the new behaviour.
 - **The Guide follows the spec.** The in-app Guide's pages (`src/renderer/src/guide/pages/`, ordered in `guide/content.ts`) are updated with every behaviour change they describe.
 - **No company-specific content.** No company names, internal hosts, accounts or other organisation-specific values in code, tests, docs or examples. Use generic ones (`ABC-142`, `you@example.com`).
 - **The product name lives in `src/shared/brand.ts` only.** `npm run check:name` fails if it appears elsewhere in code.
@@ -56,4 +56,4 @@ Pushing a version tag runs `.github/workflows/release.yml`, which builds and pub
 
 Security issues don't go in public issues: see [SECURITY.md](SECURITY.md).
 
-By contributing, you agree that your contributions are licensed under the [MIT license](LICENSE), and to follow the [code of conduct](CODE_OF_CONDUCT.md).
+By contributing, you agree that your contributions are licensed under the [MIT license](../LICENSE), and to follow the [code of conduct](CODE_OF_CONDUCT.md).

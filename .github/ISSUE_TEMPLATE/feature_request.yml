@@ -25,4 +25,4 @@ body:
     attributes:
       label: Contributing
       options:
-        - label: I'd like to implement this myself (see CONTRIBUTING.md).
+        - label: I'd like to implement this myself (see .github/CONTRIBUTING.md).
