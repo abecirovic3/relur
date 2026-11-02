@@ -1,0 +1,90 @@
+# Checks every pull request and every push to main: lint, typecheck, unit
+# tests and the name and notices checks on Linux and macOS, and the e2e tests
+# on Linux under xvfb with a fake claude (never the real one). No secrets; the
+# token can only read the repository. A newer push cancels the run it replaces.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # The unit tests check each login shell and the launcher badge's D-Bus
+      # signal where they are installed, as in scripts/linux-check.sh.
+      - name: Shells and D-Bus (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh fish dbus
+
+      - name: Install
+        run: npm ci
+
+      - name: Check
+        run: npm run check
+
+  # The e2e suites on the production build, as scripts/linux-check.sh runs
+  # them, with Chromium's sandbox on. Ubuntu 24.04 keeps unprivileged user
+  # namespaces from programs without an AppArmor profile, which Electron in
+  # node_modules is; the runner lifts that restriction for the job.
+  e2e-linux:
+    name: e2e (linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth zsh fish dbus \
+            libgtk-3-0t64 libnss3 libgbm1 libasound2t64 libxss1 libxshmfence1
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Self-test
+        run: xvfb-run -a npx electron . --self-test
+
+      - name: e2e
+        run: |
+          for test in smoke onboarding quit continue updates; do
+            xvfb-run -a npx tsx --tsconfig tsconfig.node.json "scripts/e2e-$test.ts"
+          done
