@@ -106,3 +106,21 @@ function migrate(db: StateDb): void {
 }
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
+
+/** What a statement gives once the database is closed: nothing changed, nothing found. */
+const CLOSED_STATEMENT = {
+  run: () => ({ changes: 0, lastInsertRowid: 0 }),
+  get: () => undefined,
+  all: () => [],
+};
+
+/**
+ * Prepares a statement, or, once state.db is closed at quit (spec §5), logs
+ * and returns one that does nothing: a late caller (a terminal key or a timer
+ * after the shutdown began) must not throw in the main process.
+ */
+export function prepareOrSkip(db: StateDb, sql: string): Database.Statement {
+  if (db.open) return db.prepare(sql);
+  console.warn(`state.db is closed; skipped: ${sql.trim().split(/\s+/).slice(0, 4).join(' ')} …`);
+  return CLOSED_STATEMENT as unknown as Database.Statement;
+}

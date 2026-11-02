@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import type { WorkspaceState } from '@shared/status';
 import { type UnfinishedKind, unfinishedKind } from '@shared/unfinished';
 import type { PrStatus, Workspace, WorkspaceRepo } from '@shared/workspaces';
-import type { StateDb } from './state-db';
+import { prepareOrSkip, type StateDb } from './state-db';
 
 interface Row {
   id: string;
@@ -142,6 +142,11 @@ export class WorkspaceRecords {
 
   constructor(private readonly db: StateDb) {}
 
+  /** A statement, or one that does nothing once state.db is closed (spec §5). */
+  private prepare(sql: string) {
+    return prepareOrSkip(this.db, sql);
+  }
+
   /** Called after every insert, state change and archive. */
   onChange(listener: () => void): () => void {
     this.events.on('change', listener);
@@ -158,6 +163,10 @@ export class WorkspaceRecords {
     },
   ): void {
     const linked = (workspace.repos ?? []).filter((r) => !('primary' in r) || !r.primary);
+    if (!this.db.open) {
+      console.warn(`state.db is closed; workspace ${workspace.id} not recorded`);
+      return;
+    }
     this.db.transaction(() => {
       this.insertRow(workspace);
       for (const [index, repo] of linked.entries()) this.insertRepo(workspace.id, repo, index + 1);
@@ -167,18 +176,19 @@ export class WorkspaceRecords {
 
   /** Links another repository to a workspace (spec §21.4), after the others. */
   addRepo(workspaceId: string, repo: NewLinkedRepo): void {
-    const row = this.db
-      .prepare('SELECT MAX(position) AS last FROM workspace_repos WHERE workspace_id = ?')
-      .get(workspaceId) as { last: number | null };
+    const row = this.prepare(
+      'SELECT MAX(position) AS last FROM workspace_repos WHERE workspace_id = ?',
+    ).get(workspaceId) as { last: number | null };
     this.insertRepo(workspaceId, repo, (row.last ?? 0) + 1);
     this.events.emit('change');
   }
 
   /** Unlinks a repository; the main one can't be. */
   removeRepo(workspaceId: string, projectId: string): void {
-    this.db
-      .prepare('DELETE FROM workspace_repos WHERE workspace_id = ? AND project_id = ?')
-      .run(workspaceId, projectId);
+    this.prepare('DELETE FROM workspace_repos WHERE workspace_id = ? AND project_id = ?').run(
+      workspaceId,
+      projectId,
+    );
     this.events.emit('change');
   }
 
@@ -192,63 +202,57 @@ export class WorkspaceRecords {
   }
 
   private insertRepo(workspaceId: string, repo: NewLinkedRepo, position: number): void {
-    this.db
-      .prepare(
-        `INSERT INTO workspace_repos (workspace_id, project_id, position, worktree_path, base_branch)
+    this.prepare(
+      `INSERT INTO workspace_repos (workspace_id, project_id, position, worktree_path, base_branch)
          VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(workspaceId, repo.projectId, position, repo.worktreePath, repo.baseBranch);
+    ).run(workspaceId, repo.projectId, position, repo.worktreePath, repo.baseBranch);
   }
 
   private insertRow(
     workspace: Omit<Workspace, 'repos' | 'background' | 'unfinished' | 'lastPrompt'>,
   ): void {
-    this.db
-      .prepare(
-        `INSERT INTO workspaces
+    this.prepare(
+      `INSERT INTO workspaces
            (id, profile_id, project_id, name, task_id, task_title, task_url, branch, base_branch,
             worktree_path, status, unread, created_at, last_activity_at, state_message, state_since,
             claude_session_id, port_base, port_count)
          VALUES (@id, @profileId, @projectId, @name, @taskId, @taskTitle, @taskUrl, @branch,
             @baseBranch, @worktreePath, @state, @unread, @createdAt, @lastActivityAt, @stateMessage,
             @stateSince, @claudeSessionId, @portBase, @portCount)`,
-      )
-      .run({
-        ...workspace,
-        ports: undefined,
-        pr: undefined,
-        portBase: workspace.ports?.base ?? null,
-        portCount: workspace.ports?.count ?? null,
-        taskId: workspace.task.id,
-        taskTitle: workspace.task.title,
-        taskUrl: workspace.task.url,
-        unread: workspace.unread ? 1 : 0,
-      });
+    ).run({
+      ...workspace,
+      ports: undefined,
+      pr: undefined,
+      portBase: workspace.ports?.base ?? null,
+      portCount: workspace.ports?.count ?? null,
+      taskId: workspace.task.id,
+      taskTitle: workspace.task.title,
+      taskUrl: workspace.task.url,
+      unread: workspace.unread ? 1 : 0,
+    });
   }
 
   /** Workspaces that haven't been deleted, oldest first. */
   list(): Workspace[] {
-    const rows = this.db
-      .prepare('SELECT * FROM workspaces WHERE archived_at IS NULL ORDER BY created_at, id')
-      .all() as Row[];
+    const rows = this.prepare(
+      'SELECT * FROM workspaces WHERE archived_at IS NULL ORDER BY created_at, id',
+    ).all() as Row[];
     return this.withRepos(rows);
   }
 
   get(id: string): Workspace | null {
-    const row = this.db
-      .prepare('SELECT * FROM workspaces WHERE id = ? AND archived_at IS NULL')
-      .get(id) as Row | undefined;
+    const row = this.prepare('SELECT * FROM workspaces WHERE id = ? AND archived_at IS NULL').get(
+      id,
+    ) as Row | undefined;
     return row ? (this.withRepos([row])[0] ?? null) : null;
   }
 
   private withRepos(rows: Row[]): Workspace[] {
     const linked = new Map<string, WorkspaceRepo[]>();
-    const repoRows = this.db
-      .prepare(
-        `SELECT r.* FROM workspace_repos r JOIN workspaces w ON w.id = r.workspace_id
+    const repoRows = this.prepare(
+      `SELECT r.* FROM workspace_repos r JOIN workspaces w ON w.id = r.workspace_id
          WHERE w.archived_at IS NULL ORDER BY r.position`,
-      )
-      .all() as RepoRow[];
+    ).all() as RepoRow[];
     for (const r of repoRows) {
       const list = linked.get(r.workspace_id) ?? [];
       list.push(toRepo(r));
@@ -277,51 +281,47 @@ export class WorkspaceRecords {
     }: { message?: string | null; unread?: boolean; background?: number; at?: Date } = {},
   ): void {
     const now = at.toISOString();
-    this.db
-      .prepare(
-        `UPDATE workspaces SET
+    this.prepare(
+      `UPDATE workspaces SET
            state_since = CASE WHEN status = @state AND state_since IS NOT NULL THEN state_since ELSE @now END,
            status = @state, state_message = @message, background = @background,
            last_activity_at = @now,
            unread = COALESCE(@unread, unread)
          WHERE id = @id AND archived_at IS NULL`,
-      )
-      .run({
-        id,
-        state,
-        now,
-        message,
-        background,
-        unread: unread === undefined ? null : unread ? 1 : 0,
-      });
+    ).run({
+      id,
+      state,
+      now,
+      message,
+      background,
+      unread: unread === undefined ? null : unread ? 1 : 0,
+    });
     this.events.emit('change');
   }
 
   /** Viewing a workspace clears its unread marker (spec §10.2). */
   markRead(id: string): void {
-    const result = this.db
-      .prepare('UPDATE workspaces SET unread = 0 WHERE id = ? AND unread = 1')
-      .run(id);
+    const result = this.prepare('UPDATE workspaces SET unread = 0 WHERE id = ? AND unread = 1').run(
+      id,
+    );
     if (result.changes > 0) this.events.emit('change');
   }
 
   /** Claude's session id and transcript path, from hook payloads. */
   setClaudeSession(id: string, sessionId: string | null, transcriptPath: string | null): void {
-    const result = this.db
-      .prepare(
-        `UPDATE workspaces SET
+    const result = this.prepare(
+      `UPDATE workspaces SET
            claude_session_id = COALESCE(@sessionId, claude_session_id),
            transcript_path = COALESCE(@transcriptPath, transcript_path)
          WHERE id = @id AND (COALESCE(@sessionId, claude_session_id) IS NOT claude_session_id
            OR COALESCE(@transcriptPath, transcript_path) IS NOT transcript_path)`,
-      )
-      .run({ id, sessionId, transcriptPath });
+    ).run({ id, sessionId, transcriptPath });
     if (result.changes > 0) this.events.emit('change');
   }
 
   /** The transcript path Claude Code reported (read-only use, decision D12). */
   transcriptPath(id: string): string | null {
-    const row = this.db.prepare('SELECT transcript_path FROM workspaces WHERE id = ?').get(id) as
+    const row = this.prepare('SELECT transcript_path FROM workspaces WHERE id = ?').get(id) as
       | { transcript_path: string | null }
       | undefined;
     return row?.transcript_path ?? null;
@@ -332,16 +332,17 @@ export class WorkspaceRecords {
    * start (spec §13.5): set for workspaces made with New workspace.
    */
   startPromptPending(id: string): boolean {
-    const row = this.db.prepare('SELECT start_prompt_sent FROM workspaces WHERE id = ?').get(id) as
+    const row = this.prepare('SELECT start_prompt_sent FROM workspaces WHERE id = ?').get(id) as
       | { start_prompt_sent: number }
       | undefined;
     return row?.start_prompt_sent === 0;
   }
 
   setStartPromptPending(id: string, pending: boolean): void {
-    this.db
-      .prepare('UPDATE workspaces SET start_prompt_sent = ? WHERE id = ?')
-      .run(pending ? 0 : 1, id);
+    this.prepare('UPDATE workspaces SET start_prompt_sent = ? WHERE id = ?').run(
+      pending ? 0 : 1,
+      id,
+    );
   }
 
   /**
@@ -349,16 +350,17 @@ export class WorkspaceRecords {
    * (spec §13.5): set for a workspace made without a title, or adopted.
    */
   titleFromStatusPending(id: string): boolean {
-    const row = this.db.prepare('SELECT title_from_status FROM workspaces WHERE id = ?').get(id) as
+    const row = this.prepare('SELECT title_from_status FROM workspaces WHERE id = ?').get(id) as
       | { title_from_status: number }
       | undefined;
     return row?.title_from_status === 1;
   }
 
   setTitleFromStatusPending(id: string, pending: boolean): void {
-    this.db
-      .prepare('UPDATE workspaces SET title_from_status = ? WHERE id = ?')
-      .run(pending ? 1 : 0, id);
+    this.prepare('UPDATE workspaces SET title_from_status = ? WHERE id = ?').run(
+      pending ? 1 : 0,
+      id,
+    );
   }
 
   /**
@@ -373,24 +375,24 @@ export class WorkspaceRecords {
       workspace.name === named(workspace.task.title) || workspace.name === workspace.branch
         ? named(title)
         : workspace.name;
-    this.db
-      .prepare('UPDATE workspaces SET task_title = ?, name = ? WHERE id = ?')
-      .run(title, name, id);
+    this.prepare('UPDATE workspaces SET task_title = ?, name = ? WHERE id = ?').run(
+      title,
+      name,
+      id,
+    );
     this.events.emit('change');
   }
 
   /** Whether its Claude runs; kept so the next launch can resume it (spec §9.4). */
   setClaudeRunning(id: string, running: boolean): void {
-    this.db
-      .prepare('UPDATE workspaces SET claude_running = ? WHERE id = ?')
-      .run(running ? 1 : 0, id);
+    this.prepare('UPDATE workspaces SET claude_running = ? WHERE id = ?').run(running ? 1 : 0, id);
   }
 
   /** Workspaces whose Claude was running when the app last quit. */
   claudeWasRunning(): Workspace[] {
-    const rows = this.db
-      .prepare('SELECT * FROM workspaces WHERE archived_at IS NULL AND claude_running = 1')
-      .all() as Row[];
+    const rows = this.prepare(
+      'SELECT * FROM workspaces WHERE archived_at IS NULL AND claude_running = 1',
+    ).all() as Row[];
     return this.withRepos(rows);
   }
 
@@ -399,13 +401,11 @@ export class WorkspaceRecords {
    * prompt, and Claude is at work again, so it is no longer unfinished (spec §9.7).
    */
   promptSent(id: string, prompt: string | null): void {
-    this.db
-      .prepare(
-        `UPDATE workspaces SET last_prompt = COALESCE(@prompt, last_prompt),
+    this.prepare(
+      `UPDATE workspaces SET last_prompt = COALESCE(@prompt, last_prompt),
            unfinished = NULL, unfinished_at = NULL, unfinished_new = 0
          WHERE id = @id`,
-      )
-      .run({ id, prompt });
+    ).run({ id, prompt });
     this.events.emit('change');
   }
 
@@ -417,18 +417,14 @@ export class WorkspaceRecords {
   setUnfinished(id: string, kind: UnfinishedKind | null, at = new Date()): void {
     const result =
       kind === null
-        ? this.db
-            .prepare(
-              `UPDATE workspaces SET unfinished = NULL, unfinished_at = NULL, unfinished_new = 0
+        ? this.prepare(
+            `UPDATE workspaces SET unfinished = NULL, unfinished_at = NULL, unfinished_new = 0
                WHERE id = ? AND unfinished IS NOT NULL`,
-            )
-            .run(id)
-        : this.db
-            .prepare(
-              `UPDATE workspaces SET unfinished = ?, unfinished_at = ?, unfinished_new = 1
+          ).run(id)
+        : this.prepare(
+            `UPDATE workspaces SET unfinished = ?, unfinished_at = ?, unfinished_new = 1
                WHERE id = ? AND archived_at IS NULL`,
-            )
-            .run(kind, at.toISOString(), id);
+          ).run(kind, at.toISOString(), id);
     if (result.changes > 0) this.events.emit('change');
   }
 
@@ -439,13 +435,11 @@ export class WorkspaceRecords {
    * crash. It counts the same, since its last activity.
    */
   markUnfinishedAfterCrash(): void {
-    const rows = this.db
-      .prepare(
-        `SELECT id, status, last_activity_at, created_at FROM workspaces
+    const rows = this.prepare(
+      `SELECT id, status, last_activity_at, created_at FROM workspaces
          WHERE archived_at IS NULL AND unfinished IS NULL`,
-      )
-      .all() as Pick<Row, 'id' | 'status' | 'last_activity_at' | 'created_at'>[];
-    const mark = this.db.prepare(
+    ).all() as Pick<Row, 'id' | 'status' | 'last_activity_at' | 'created_at'>[];
+    const mark = this.prepare(
       `UPDATE workspaces SET unfinished = ?, unfinished_at = ?, unfinished_new = 1 WHERE id = ?`,
     );
     for (const row of rows) {
@@ -461,13 +455,11 @@ export class WorkspaceRecords {
    * offers to continue (spec §9.7); they stay marked but aren't new any more.
    */
   takeNewUnfinished(): Workspace[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM workspaces
+    const rows = this.prepare(
+      `SELECT * FROM workspaces
          WHERE archived_at IS NULL AND unfinished IS NOT NULL AND unfinished_new = 1`,
-      )
-      .all() as Row[];
-    this.db.prepare('UPDATE workspaces SET unfinished_new = 0 WHERE unfinished_new = 1').run();
+    ).all() as Row[];
+    this.prepare('UPDATE workspaces SET unfinished_new = 0 WHERE unfinished_new = 1').run();
     return this.withRepos(rows);
   }
 
@@ -476,18 +468,18 @@ export class WorkspaceRecords {
    * becomes Exited; last activity stays as it was.
    */
   resetRunningStates(): void {
-    this.db
-      .prepare(
-        `UPDATE workspaces SET status = 'exited'
+    this.prepare(
+      `UPDATE workspaces SET status = 'exited'
          WHERE archived_at IS NULL AND status NOT IN ('exited', 'error', 'done')`,
-      )
-      .run();
+    ).run();
   }
 
   setPorts(id: string, ports: { base: number; count: number }): void {
-    this.db
-      .prepare('UPDATE workspaces SET port_base = ?, port_count = ? WHERE id = ?')
-      .run(ports.base, ports.count, id);
+    this.prepare('UPDATE workspaces SET port_base = ?, port_count = ? WHERE id = ?').run(
+      ports.base,
+      ports.count,
+      id,
+    );
     this.events.emit('change');
   }
 
@@ -496,7 +488,7 @@ export class WorkspaceRecords {
    * the main one (`projectId` null or the main project), else its link row.
    */
   private repoTarget(id: string, projectId: string | null): { table: string; where: string } {
-    const main = this.db.prepare('SELECT project_id FROM workspaces WHERE id = ?').get(id) as
+    const main = this.prepare('SELECT project_id FROM workspaces WHERE id = ?').get(id) as
       | { project_id: string }
       | undefined;
     if (projectId === null || main?.project_id === projectId) {
@@ -508,7 +500,7 @@ export class WorkspaceRecords {
   /** The commit a repository's branch started from (for the git-only PR check, spec §12.3). */
   setStartCommit(id: string, commit: string, projectId: string | null = null): void {
     const { table, where } = this.repoTarget(id, projectId);
-    this.db.prepare(`UPDATE ${table} SET start_commit = @commit WHERE ${where}`).run({
+    this.prepare(`UPDATE ${table} SET start_commit = @commit WHERE ${where}`).run({
       id,
       projectId,
       commit,
@@ -517,7 +509,7 @@ export class WorkspaceRecords {
 
   startCommit(id: string, projectId: string | null = null): string | null {
     const { table, where } = this.repoTarget(id, projectId);
-    const row = this.db.prepare(`SELECT start_commit FROM ${table} WHERE ${where}`).get({
+    const row = this.prepare(`SELECT start_commit FROM ${table} WHERE ${where}`).get({
       id,
       projectId,
     }) as { start_commit: string | null } | undefined;
@@ -531,32 +523,28 @@ export class WorkspaceRecords {
     { projectId = null, hasCommits }: { projectId?: string | null; hasCommits?: boolean } = {},
   ): void {
     const { table, where } = this.repoTarget(id, projectId);
-    const result = this.db
-      .prepare(
-        `UPDATE ${table} SET pr_state = @state, pr_url = @url, pr_source = @source,
+    const result = this.prepare(
+      `UPDATE ${table} SET pr_state = @state, pr_url = @url, pr_source = @source,
            has_commits = COALESCE(@hasCommits, has_commits)
          WHERE ${where} AND (pr_state IS NOT @state OR pr_url IS NOT @url OR pr_source IS NOT @source
            OR has_commits IS NOT COALESCE(@hasCommits, has_commits))`,
-      )
-      .run({
-        id,
-        projectId,
-        state: pr?.state ?? null,
-        url: pr?.url ?? null,
-        source: pr?.source ?? null,
-        hasCommits: hasCommits === undefined ? null : hasCommits ? 1 : 0,
-      });
+    ).run({
+      id,
+      projectId,
+      state: pr?.state ?? null,
+      url: pr?.url ?? null,
+      source: pr?.source ?? null,
+      hasCommits: hasCommits === undefined ? null : hasCommits ? 1 : 0,
+    });
     if (result.changes > 0) this.events.emit('change');
   }
 
   /** Why a repository's setup failed, or null once it passed (spec §21.3). */
   setSetupError(id: string, projectId: string | null, error: string | null): void {
     const { table, where } = this.repoTarget(id, projectId);
-    const result = this.db
-      .prepare(
-        `UPDATE ${table} SET setup_error = @error WHERE ${where} AND setup_error IS NOT @error`,
-      )
-      .run({ id, projectId, error });
+    const result = this.prepare(
+      `UPDATE ${table} SET setup_error = @error WHERE ${where} AND setup_error IS NOT @error`,
+    ).run({ id, projectId, error });
     if (result.changes > 0) this.events.emit('change');
   }
 
@@ -567,11 +555,9 @@ export class WorkspaceRecords {
 
   /** Archiving releases its ports (spec §8.4, §14.2). */
   archive(id: string, at = new Date()): void {
-    this.db
-      .prepare(
-        `UPDATE workspaces SET archived_at = ?, status = 'deleted', port_base = NULL, port_count = NULL WHERE id = ?`,
-      )
-      .run(at.toISOString(), id);
+    this.prepare(
+      `UPDATE workspaces SET archived_at = ?, status = 'deleted', port_base = NULL, port_count = NULL WHERE id = ?`,
+    ).run(at.toISOString(), id);
     this.events.emit('change');
   }
 }

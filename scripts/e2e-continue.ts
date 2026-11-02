@@ -121,10 +121,21 @@ exec sleep 600
       return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').length : 0;
     };
 
+    // Any uncaught exception in the main process is a failure: written to a
+    // file, as the listener outlives the inspector's connection.
+    const uncaughtLog = path.join(fx.root, 'uncaught.log');
     const launch = async () => {
       app = await launchApp({ env: withDisplayEnv(fx.env), dev: devMode, electronArgs });
+      await app.main.eval(`void process.on('uncaughtException', (e) =>
+        process.mainModule.require('node:fs').appendFileSync(${JSON.stringify(uncaughtLog)}, String(e?.stack ?? e) + '\\n'))`);
       return app;
     };
+    const assertNoUncaught = (what: string) =>
+      assert.equal(
+        fs.existsSync(uncaughtLog) ? fs.readFileSync(uncaughtLog, 'utf8') : '',
+        '',
+        `${what}: no uncaught exception in the main process`,
+      );
     /** ⌘Q as a user quits, the quit dialog's text, then Quit; the app exits. */
     const quit = async (running: RunningApp, expected: RegExp) => {
       await running.main.eval(
@@ -366,10 +377,30 @@ exec sleep 600
     assert.equal(await page.eval(marker('Charlie')), 'permission');
     // Claude resumed once per start in each workspace.
     assert.equal(starts('alpha'), 3);
-    page.close();
-    running.main.close();
-    assert.equal(await running.stop(), false, 'the app quit by itself');
-    app = undefined;
+    assertNoUncaught('the restarts');
+    // Quitting while keys keep arriving in a workspace's Claude terminal: input
+    // after the shutdown began must reach neither the sessions nor state.db.
+    await open(page, 'Alpha', 'api');
+    const lines = () =>
+      fs.readFileSync(path.join(fx.root, 'input-alpha.txt'), 'utf8').split('\n').length;
+    const before = lines();
+    await page.eval(`(() => {
+      const input = [...document.querySelectorAll('[data-terminal][data-connected]')]
+        .find((t) => t.offsetParent)?.querySelector('.xterm-helper-textarea');
+      const enter = () => {
+        const e = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+        Object.defineProperty(e, 'keyCode', { get: () => 13 });
+        Object.defineProperty(e, 'which', { get: () => 13 });
+        return e;
+      };
+      setInterval(() => input?.dispatchEvent(enter()), 2);
+    })()`);
+    for (let i = 0; i < 50 && lines() < before + 20; i++) await sleep(100);
+    assert.ok(lines() >= before + 20, 'the keys reach Claude');
+    await quit(running, /running session/);
+    // The listener writes after the window is gone: give a late one time.
+    await sleep(500);
+    assertNoUncaught('quitting while typing');
     console.log(`e2e continue test passed (${devMode ? 'dev server' : 'production build'})`);
   } catch (error) {
     if (app) {

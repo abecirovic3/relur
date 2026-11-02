@@ -89,17 +89,31 @@ const shutdownTasks: (() => void)[] = [];
 const atShutdown = (task: () => void) => {
   shutdownTasks.push(task);
 };
+/** Closes state.db: the very last step, once nothing that uses it runs (spec §5). */
+let closeDatabase: (() => void) | null = null;
+/**
+ * Once quitting goes ahead (spec §5): no session starts, no terminal input,
+ * hook event, status line or command arrives any more, and the terminal
+ * views' ports close. Terminal output and exits already stopped reaching
+ * the views with host.close().
+ */
+const stopAccepting = () => {
+  host.close();
+  bridge.close();
+};
 // The one will-quit handler. A terminal still running here would end while
 // Electron tears Node down, where node-pty's exit callback aborts the app
 // ("quit unexpectedly"): it is stopped first and the quit goes on after.
 app.on('will-quit', (event) => {
-  host.close();
+  stopAccepting();
   if (host.runningCount() > 0) {
     event.preventDefault();
     void host.shutdown().then(() => app.quit());
     return;
   }
   for (const task of shutdownTasks.splice(0)) task();
+  closeDatabase?.();
+  closeDatabase = null;
 });
 const bridge = new HookBridge();
 let status: StatusService | null = null;
@@ -308,7 +322,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     appConfig = config;
     appDataDir = dataDir;
     const db = openStateDb(path.join(dataDir, 'state.db'));
-    atShutdown(() => db.close());
+    closeDatabase = () => db.close();
     env = new EnvService(config);
 
     installSecurityPolicies();
@@ -565,7 +579,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     if (stopped || host.runningCount() === 0) {
       quitting = true;
       // Nothing cancels the quit from here: no session may start (spec §5).
-      host.close();
+      stopAccepting();
       return;
     }
     event.preventDefault();
@@ -618,7 +632,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       if (status) status.quitting = true;
       // What Claude was doing, before it stops (spec §9.7).
       unfinished?.atQuit(claudeWorkspaces(host.list().filter((s) => s.status === 'running')));
-      host.close();
+      stopAccepting();
       await host.stopAll();
       stopped = true;
       app.quit();

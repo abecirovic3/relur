@@ -77,6 +77,24 @@ describe('SessionHost', () => {
     expect(() => host.spawn(sh('true'))).toThrow(/Quitting/);
   });
 
+  it('once closed, takes no input, tells no listener, closes the views and attaches none', async () => {
+    const host = new SessionHost({ batchMs: 5, killTimeoutMs: 600 });
+    const session = host.spawn(sh('sleep 5', { kind: 'claude', workspaceId: 'w1' }));
+    const view = recorder();
+    const attachment = host.attach(session.id, view.sink);
+    const inputs: string[] = [];
+    host.onInput((_info, data) => inputs.push(data));
+    attachment.input('a');
+    expect(inputs).toEqual(['a']);
+    host.close();
+    expect(view.closed).toBe(true);
+    // Keys still on their way from a window that is going away (spec §5).
+    attachment.input('\r');
+    expect(inputs).toEqual(['a']);
+    expect(() => host.attach(session.id, recorder().sink)).toThrow(/Quitting/);
+    await host.shutdown();
+  });
+
   it('keeps marks at their place in the output and sends them with the replay', async () => {
     const host = new SessionHost({ batchMs: 5 });
     const session = host.spawn(sh('printf one; read x; printf two; read y'));

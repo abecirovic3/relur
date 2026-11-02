@@ -253,6 +253,7 @@ export class SessionHost {
 
   /** Connects a view: it receives the scrollback first, then live output. */
   attach(id: string, sink: TerminalSink): Attachment {
+    if (this.closed) throw new Error('Quitting: no terminal view attaches any more');
     const session = this.session(id);
     // Send buffered output to existing views first, so the replay doesn't repeat it.
     this.flush(session);
@@ -269,7 +270,10 @@ export class SessionHost {
     }
     session.sinks.add(sink);
     return {
+      // Once quitting, keys reach neither the session nor the input listeners,
+      // which read state.db (spec §5); nor do they after the session exited.
       input: (data) => {
+        if (this.closed || session.info.status !== 'running') return;
         this.write(id, data);
         this.events.emit('input', session.info, data);
       },
@@ -335,7 +339,13 @@ export class SessionHost {
    * the app.
    */
   close(): void {
+    if (this.closed) return;
     this.closed = true;
+    // The views' ports close too: no input arrives after this.
+    for (const session of this.sessions.values()) {
+      for (const sink of session.sinks) sink.close();
+      session.sinks.clear();
+    }
   }
 
   async stopAll(): Promise<void> {
