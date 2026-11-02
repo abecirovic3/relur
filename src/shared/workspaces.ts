@@ -1,4 +1,5 @@
 import type { WorkspaceState } from './status';
+import type { Unfinished } from './unfinished';
 import type { WorkflowInfo } from './workflow';
 
 export interface WorkspaceTask {
@@ -33,6 +34,10 @@ export interface Workspace {
    * it waits for agents, Done with a note when only commands are left running.
    */
   background: number;
+  /** Claude didn't finish when the app stopped (spec §9.7); null otherwise. */
+  unfinished: Unfinished | null;
+  /** The last prompt sent to its Claude (UserPromptSubmit), for the overview (spec §9.7). */
+  lastPrompt: string | null;
   /** Claude Code's session id, from hook payloads; used for `--resume` (spec §9.4). */
   claudeSessionId: string | null;
   /** Its block of ports (spec §8.4); null until allocated. */

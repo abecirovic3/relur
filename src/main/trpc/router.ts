@@ -40,6 +40,7 @@ import type { SetupService } from '../setup/service';
 import type { SkillService } from '../skills/service';
 import type { ElectronStatusPlatform } from '../status/electron';
 import type { Alert, ConversationEvent, StatusService } from '../status/service';
+import type { UnfinishedService } from '../unfinished/service';
 import type { WorkflowSetupService } from '../workflow/propose';
 import type { WorkflowService } from '../workflow/service';
 import type { NewWorktree, WorktreeNotices } from '../worktrees/notices';
@@ -70,6 +71,8 @@ export interface Services {
   menuRequests: EventEmitter;
   /** The compiled helper, or null when it wasn't built. */
   helper: string | null;
+  /** Continuing interrupted work (spec §9.7). */
+  unfinished: UnfinishedService;
   /** The quit dialog: requests with busy session ids, and the user's answer. */
   quit: { asker: EventEmitter; answer: (quit: boolean) => void };
   /** The notice when the window first closes and the app keeps running (spec §5). */
@@ -104,6 +107,7 @@ export function createAppRouter({
   helper,
   quit,
   closeNotice,
+  unfinished,
 }: Services) {
   const host = terminals.host;
   const sessionId = z.object({ sessionId: z.string().min(1) });
@@ -474,6 +478,9 @@ export function createAppRouter({
               .optional(),
             pr: z
               .object({ createCommand: z.string().max(2000), statusCommand: z.string().max(2000) })
+              .optional(),
+            resume: z
+              .object({ continueAtStart: z.boolean(), prompt: z.string().max(4000) })
               .optional(),
           }),
         )
@@ -933,6 +940,27 @@ export function createAppRouter({
         .mutation(({ input }) => host.resize(input.sessionId, input.cols, input.rows)),
       stop: publicProcedure.input(sessionId).mutation(({ input }) => host.stop(input.sessionId)),
       close: publicProcedure.input(sessionId).mutation(({ input }) => host.remove(input.sessionId)),
+    }),
+
+    /** Work the app's stop interrupted (spec §9.7). */
+    unfinished: router({
+      /** The run of continue prompts (the notice) and the start's overview. */
+      state: publicProcedure.query(() => unfinished.state()),
+      changes: publicProcedure.subscription(({ signal }) =>
+        fromListener((listener) => unfinished.onChange(() => listener(true)), signal),
+      ),
+      /** Continue selected, and the bar's Continue: one after another, a few seconds apart. */
+      continue: publicProcedure
+        .input(z.object({ workspaceIds: z.array(z.string().min(1).max(100)).max(500) }))
+        .mutation(({ input }) => unfinished.continue(input.workspaceIds)),
+      /** Stop in the notice: the prompts not yet sent are cancelled. */
+      stop: publicProcedure.mutation(() => unfinished.stop()),
+      /** Dismiss in the bar: the marker goes. */
+      dismiss: publicProcedure
+        .input(workspaceId)
+        .mutation(({ input }) => unfinished.dismiss(input.workspaceId)),
+      /** The overview was answered; it isn't shown again in this run. */
+      closeOverview: publicProcedure.mutation(() => unfinished.closeOverview()),
     }),
 
     /** Workspace states and their alerts (spec §10). */

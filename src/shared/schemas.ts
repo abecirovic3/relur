@@ -194,6 +194,16 @@ const ProfileObjectSchema = z.object({
       doNotDisturb: z.boolean().default(false),
     })
     .prefault({}),
+  /**
+   * Spec §9.7: continue the work the app's stop interrupted when it starts
+   * again (off by default), with this prompt (unset: the default).
+   */
+  resume: z
+    .object({
+      continueAtStart: z.boolean().default(false),
+      prompt: z.string().min(1).nullish(),
+    })
+    .prefault({}),
 });
 export const ProfileSchema = z.preprocess(
   (raw: z.input<typeof ProfileObjectSchema>) => liftLookup(raw),

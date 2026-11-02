@@ -30,6 +30,7 @@ import { SandboxWarning } from './components/SandboxWarning';
 import { SetupCheckPanel } from './components/SetupCheck';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
+import { ContinueNotice, UnfinishedDialog } from './components/UnfinishedDialog';
 import { FOCUS_CLAUDE_EVENT, WorkspaceView } from './components/WorkspaceView';
 import { type GuideTarget, GuideView, target } from './guide/GuideView';
 import { GuideContext } from './guide/link';
@@ -75,6 +76,14 @@ export function App() {
     }),
   );
   const workspaces = useQuery(trpc.workspaces.list.queryOptions());
+  // Continuing interrupted work (spec §9.7): the notice and the start's overview.
+  const unfinished = useQuery(trpc.unfinished.state.queryOptions());
+  useSubscription(
+    trpc.unfinished.changes.subscriptionOptions(undefined, {
+      onData: () =>
+        void queryClient.invalidateQueries({ queryKey: trpc.unfinished.state.queryKey() }),
+    }),
+  );
   const [selectedProfile, setSelectedProfile] = useState<string | null>(null);
   // What each profile shows, and the selected tab of each view (by profile and view key).
   const [views, setViews] = useState<Record<string, View>>({});
@@ -720,6 +729,14 @@ export function App() {
                   />
                 ) : null}
                 <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-term">
+                  {unfinished.data?.run.running ? (
+                    <ContinueNotice
+                      run={unfinished.data.run}
+                      workspaces={workspaces.data ?? []}
+                      profiles={profiles}
+                      onStop={() => void trpcClient.unfinished.stop.mutate()}
+                    />
+                  ) : null}
                   {appNotice ? (
                     <div
                       role={appNotice.info ? 'status' : 'alert'}
@@ -924,6 +941,24 @@ export function App() {
               onAnswer={(quit) => {
                 setQuitting(null);
                 void trpcClient.app.answerQuit.mutate({ quit });
+              }}
+            />
+          ) : null}
+          {unfinished.data?.overview && workspaces.data && !quitting ? (
+            <UnfinishedDialog
+              workspaceIds={unfinished.data.overview}
+              workspaces={workspaces.data}
+              profiles={profiles}
+              projects={currentConfig?.projects ?? []}
+              usage={usage.data ?? {}}
+              onContinue={(workspaceIds) => {
+                void trpcClient.unfinished.closeOverview.mutate();
+                void trpcClient.unfinished.continue.mutate({ workspaceIds });
+              }}
+              onClose={() => void trpcClient.unfinished.closeOverview.mutate()}
+              onOpen={(w) => {
+                void trpcClient.unfinished.closeOverview.mutate();
+                openWorkspace(w);
               }}
             />
           ) : null}

@@ -2,6 +2,7 @@ import { BRAND } from '@shared/brand';
 import type { Profile } from '@shared/schemas';
 import { GLYPH_LABEL, glyphFor } from '@shared/status';
 import type { SessionInfo } from '@shared/terminal-protocol';
+import { quitNextStep, unfinishedKind } from '@shared/unfinished';
 import type { Workspace } from '@shared/workspaces';
 import { type FormEvent, useEffect, useRef } from 'react';
 import { button, Kbd, keyHint } from '../ui/controls';
@@ -31,6 +32,17 @@ export function QuitDialog({
     const session = sessions.find((s) => s.id === id);
     return session ? [session] : [];
   });
+  // What comes next for the Claude sessions quitting cuts off (spec §9.7).
+  const next = quitNextStep(
+    rows.flatMap((session) => {
+      const workspace =
+        session.kind === 'claude' ? workspaces.find((w) => w.id === session.workspaceId) : null;
+      const kind = workspace ? unfinishedKind(workspace.state) : null;
+      if (!workspace || !kind) return [];
+      const profile = profiles.find((p) => p.id === workspace.profileId);
+      return [{ kind, continues: !!profile?.resume.continueAtStart }];
+    }),
+  );
   // Quit has the focus (components.md); the dialog would otherwise focus Cancel.
   const quitButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -44,7 +56,7 @@ export function QuitDialog({
   return (
     <Modal
       title={`Stop ${plural(sessionIds.length, 'running session')}?`}
-      description={`Quitting ${BRAND.displayName} stops ${sessionIds.length === 1 ? 'it' : 'them'}. Claude conversations resume on the next launch.`}
+      description={`Quitting ${BRAND.displayName} stops ${sessionIds.length === 1 ? 'it' : 'them'}. ${next ?? 'Claude conversations resume on the next launch.'}`}
       onClose={() => onAnswer(false)}
     >
       <form onSubmit={submit}>

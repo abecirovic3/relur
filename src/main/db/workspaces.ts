@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { WorkspaceState } from '@shared/status';
+import { type UnfinishedKind, unfinishedKind } from '@shared/unfinished';
 import type { PrStatus, Workspace, WorkspaceRepo } from '@shared/workspaces';
 import type { StateDb } from './state-db';
 
@@ -32,6 +33,9 @@ interface Row {
   pr_source: string | null;
   setup_error: string | null;
   has_commits: number;
+  unfinished: string | null;
+  unfinished_at: string | null;
+  last_prompt: string | null;
 }
 
 interface RepoRow {
@@ -85,6 +89,12 @@ const STATES: readonly string[] = [
   'error',
 ] satisfies WorkspaceState[];
 
+const UNFINISHED_KINDS: readonly string[] = [
+  'working',
+  'interrupted',
+  'permission',
+] satisfies UnfinishedKind[];
+
 const toWorkspace = (row: Row, linked: WorkspaceRepo[] = []): Workspace => ({
   id: row.id,
   profileId: row.profile_id,
@@ -99,6 +109,11 @@ const toWorkspace = (row: Row, linked: WorkspaceRepo[] = []): Workspace => ({
   stateMessage: row.state_message,
   stateSince: row.state_since,
   background: row.background,
+  unfinished:
+    row.unfinished && UNFINISHED_KINDS.includes(row.unfinished)
+      ? { kind: row.unfinished as UnfinishedKind, since: row.unfinished_at ?? row.created_at }
+      : null,
+  lastPrompt: row.last_prompt,
   claudeSessionId: row.claude_session_id,
   ports:
     row.port_base !== null && row.port_count !== null
@@ -135,9 +150,11 @@ export class WorkspaceRecords {
 
   /** Records a new workspace with its linked repositories (`repos` after the main one). */
   insert(
-    workspace: Omit<Workspace, 'repos' | 'background'> & {
+    workspace: Omit<Workspace, 'repos' | 'background' | 'unfinished' | 'lastPrompt'> & {
       repos?: NewLinkedRepo[] | WorkspaceRepo[];
       background?: number;
+      unfinished?: Workspace['unfinished'];
+      lastPrompt?: string | null;
     },
   ): void {
     const linked = (workspace.repos ?? []).filter((r) => !('primary' in r) || !r.primary);
@@ -183,7 +200,9 @@ export class WorkspaceRecords {
       .run(workspaceId, repo.projectId, position, repo.worktreePath, repo.baseBranch);
   }
 
-  private insertRow(workspace: Omit<Workspace, 'repos' | 'background'>): void {
+  private insertRow(
+    workspace: Omit<Workspace, 'repos' | 'background' | 'unfinished' | 'lastPrompt'>,
+  ): void {
     this.db
       .prepare(
         `INSERT INTO workspaces
@@ -372,6 +391,83 @@ export class WorkspaceRecords {
     const rows = this.db
       .prepare('SELECT * FROM workspaces WHERE archived_at IS NULL AND claude_running = 1')
       .all() as Row[];
+    return this.withRepos(rows);
+  }
+
+  /**
+   * A prompt went to the workspace's Claude (UserPromptSubmit): it is the last
+   * prompt, and Claude is at work again, so it is no longer unfinished (spec §9.7).
+   */
+  promptSent(id: string, prompt: string | null): void {
+    this.db
+      .prepare(
+        `UPDATE workspaces SET last_prompt = COALESCE(@prompt, last_prompt),
+           unfinished = NULL, unfinished_at = NULL, unfinished_new = 0
+         WHERE id = @id`,
+      )
+      .run({ id, prompt });
+    this.events.emit('change');
+  }
+
+  /**
+   * Marks the workspace unfinished (spec §9.7), as new for the next start; a
+   * workspace already marked keeps its marker and time. Null clears it
+   * (Continue, Dismiss).
+   */
+  setUnfinished(id: string, kind: UnfinishedKind | null, at = new Date()): void {
+    const result =
+      kind === null
+        ? this.db
+            .prepare(
+              `UPDATE workspaces SET unfinished = NULL, unfinished_at = NULL, unfinished_new = 0
+               WHERE id = ? AND unfinished IS NOT NULL`,
+            )
+            .run(id)
+        : this.db
+            .prepare(
+              `UPDATE workspaces SET unfinished = ?, unfinished_at = ?, unfinished_new = 1
+               WHERE id = ? AND archived_at IS NULL`,
+            )
+            .run(kind, at.toISOString(), id);
+    if (result.changes > 0) this.events.emit('change');
+  }
+
+  /**
+   * At app start, before states are reset (spec §9.7): a quit marks the
+   * workspaces Claude was working in, interrupted or asking for permission,
+   * so one whose stored state still says so without a marker was left by a
+   * crash. It counts the same, since its last activity.
+   */
+  markUnfinishedAfterCrash(): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id, status, last_activity_at, created_at FROM workspaces
+         WHERE archived_at IS NULL AND unfinished IS NULL`,
+      )
+      .all() as Pick<Row, 'id' | 'status' | 'last_activity_at' | 'created_at'>[];
+    const mark = this.db.prepare(
+      `UPDATE workspaces SET unfinished = ?, unfinished_at = ?, unfinished_new = 1 WHERE id = ?`,
+    );
+    for (const row of rows) {
+      const kind = STATES.includes(row.status)
+        ? unfinishedKind(row.status as WorkspaceState)
+        : null;
+      if (kind) mark.run(kind, row.last_activity_at ?? row.created_at, row.id);
+    }
+  }
+
+  /**
+   * The workspaces marked unfinished since the last start, which this start
+   * offers to continue (spec §9.7); they stay marked but aren't new any more.
+   */
+  takeNewUnfinished(): Workspace[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM workspaces
+         WHERE archived_at IS NULL AND unfinished IS NOT NULL AND unfinished_new = 1`,
+      )
+      .all() as Row[];
+    this.db.prepare('UPDATE workspaces SET unfinished_new = 0 WHERE unfinished_new = 1').run();
     return this.withRepos(rows);
   }
 

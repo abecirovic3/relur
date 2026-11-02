@@ -7,6 +7,7 @@ import {
   glyphFor,
   STATE_LABEL,
 } from '@shared/status';
+import { UNFINISHED_TOOLTIP, workspaceGlyph } from '@shared/unfinished';
 import { linkedRepos, type Workspace } from '@shared/workspaces';
 import { type KeyboardEvent, useRef, useState } from 'react';
 import { trpcClient } from '../trpc';
@@ -42,7 +43,9 @@ const LABEL_COLOR: Partial<Record<Workspace['state'], string>> = {
  * its state, at a gate with the gate's label, with its background work
  * (§10.2), and its branch.
  */
-function rowTooltip(w: Workspace): string {
+function rowTooltip(w: Workspace, glyph: Glyph | null): string {
+  // The Unfinished marker (spec §9.7) says why instead.
+  if (glyph === 'unfinished') return `${w.name}\n${UNFINISHED_TOOLTIP} · ${w.branch}`;
   const state =
     w.state === 'awaiting-approval' && w.workflow?.label
       ? `${STATE_LABEL[w.state]}: ${w.workflow.label}`
@@ -360,7 +363,7 @@ export function Sidebar({
                 </div>
                 {open
                   ? projectWorkspaces.map((w) => {
-                      const glyph = glyphFor(w.state, w.unread, launching.has(w.id));
+                      const glyph = workspaceGlyph(w, launching.has(w.id));
                       const selected = w.id === selectedWorkspaceId;
                       return (
                         <button
@@ -369,7 +372,8 @@ export function Sidebar({
                           data-nav-key={`w:${w.id}`}
                           data-nav-parent={`p:${project.id}`}
                           tabIndex={tabFor(`w:${w.id}`)}
-                          title={rowTooltip(w)}
+                          title={rowTooltip(w, glyph)}
+                          data-unfinished={w.unfinished?.kind}
                           aria-current={selected || undefined}
                           onClick={() => onOpenWorkspace(w)}
                           onContextMenu={(event) => {
@@ -418,7 +422,7 @@ export function Sidebar({
                             </span>
                           ) : glyph && glyph !== 'working' ? (
                             <span
-                              className={`max-w-24 truncate text-xs font-medium ${LABEL_COLOR[w.state] ?? 'text-fg'}`}
+                              className={`max-w-24 truncate text-xs font-medium ${glyph === 'unfinished' ? 'text-st-input' : (LABEL_COLOR[w.state] ?? 'text-fg')}`}
                             >
                               {/* At a gate, the gate's own label (spec §13.5). */}
                               {glyph === 'approval' && w.workflow?.label

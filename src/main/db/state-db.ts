@@ -70,6 +70,12 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE workspaces ADD COLUMN title_from_status INTEGER NOT NULL DEFAULT 0;`,
   // How many of Claude's background tasks still run (spec §10.2).
   `ALTER TABLE workspaces ADD COLUMN background INTEGER NOT NULL DEFAULT 0;`,
+  // Claude didn't finish when the app stopped (spec §9.7): why, since when, and
+  // whether the next start still has to offer it; and the last prompt sent.
+  `ALTER TABLE workspaces ADD COLUMN unfinished TEXT;
+   ALTER TABLE workspaces ADD COLUMN unfinished_at TEXT;
+   ALTER TABLE workspaces ADD COLUMN unfinished_new INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE workspaces ADD COLUMN last_prompt TEXT;`,
 ];
 
 export type StateDb = Database.Database;

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { BRAND, envVar } from '@shared/brand';
+import { planLimitReached } from '@shared/unfinished';
 import { parseRateLimits } from '@shared/usage';
 import { app, BrowserWindow, dialog, shell } from 'electron';
 import { HookBridge } from './bridge/server';
@@ -40,6 +41,7 @@ import { SkillService } from './skills/service';
 import { ElectronStatusPlatform } from './status/electron';
 import { StatusService } from './status/service';
 import { serveTrpcOverIpc } from './trpc/electron';
+import { UnfinishedService } from './unfinished/service';
 import { createMainWindow, devIconPath } from './window';
 import { TaskLookupService } from './workflow/lookup';
 import { WorkflowSetupService } from './workflow/propose';
@@ -47,6 +49,9 @@ import { WorkflowService } from './workflow/service';
 import { WorktreeNotices } from './worktrees/notices';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** The workspaces whose Claude these sessions are. */
+const claudeWorkspaces = (sessions: { kind: string; workspaceId: string | null }[]) =>
+  sessions.flatMap((s) => (s.kind === 'claude' && s.workspaceId ? [s.workspaceId] : []));
 
 // Name and paths must be set before `ready`, so Electron's defaults (derived from
 // package.json) are never used.
@@ -95,6 +100,8 @@ app.on('will-quit', (event) => {
 });
 const bridge = new HookBridge();
 let status: StatusService | null = null;
+/** Work the app's stop interrupts (spec §9.7); set once the app is ready. */
+let unfinished: UnfinishedService | null = null;
 let statusPlatform: ElectronStatusPlatform | null = null;
 /** The quit dialog in the window (spec §5): asked with the busy session ids. */
 const quitAsker = new EventEmitter();
@@ -351,6 +358,29 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       status?.workflowChanged(workspaceId, before, after),
     );
     workspaces.startPrompt = (workspace) => workflow.startPrompt(workspace);
+    // Continuing interrupted work (spec §9.7).
+    const runningClaude = (workspaceId: string) =>
+      host
+        .list()
+        .some(
+          (s) => s.workspaceId === workspaceId && s.kind === 'claude' && s.status === 'running',
+        );
+    const continuing = new UnfinishedService({
+      records: workspaceRecords,
+      settings: (profileId) =>
+        config.get().config?.profiles.find((p) => p.id === profileId)?.resume ?? null,
+      profileOrder: () => config.get().config?.profiles.map((p) => p.id) ?? [],
+      limit: (profileId) => planLimitReached(usage.all()[profileId]),
+      claudeRunning: runningClaude,
+      startClaude: (workspaceId) => workspaces.startClaude(workspaceId),
+      send: (workspaceId, prompt) => terminals.sendToClaude(workspaceId, prompt),
+      onSpawn: (listener) =>
+        host.onSpawn((info) => {
+          if (info.kind === 'claude' && info.workspaceId) listener(info.workspaceId);
+        }),
+      onSessionStart: (listener) => status?.onSessionStart(listener) ?? (() => {}),
+    });
+    unfinished = continuing;
     workspaces.adoptPrefill = (projectId, worktree, branch) =>
       workflow.prefill(projectId, worktree, branch);
     // Worktrees made outside the app, by a skill or by hand (spec §13.6).
@@ -395,6 +425,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       finish,
       editors,
       quit: { asker: quitAsker, answer: (quit: boolean) => answerQuit?.(quit) },
+      unfinished: continuing,
       closeNotice: {
         asker: closeNoticeAsker,
         answer: (close: boolean) => answerCloseNotice?.(close),
@@ -421,7 +452,9 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     });
     showMainWindow();
     showMigrationNotice(dataDir);
-    void workspaces.resumeAtLaunch();
+    // Claude resumes where it ran (spec §9.4); then interrupted work is
+    // continued or asked about (§9.7).
+    void continuing.atLaunch(workspaces.resumeAtLaunch());
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) showMainWindow();
     });
@@ -481,7 +514,10 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
         const options = {
           type: 'warning' as const,
           message: `Stop ${sessions}?`,
-          detail: `Quitting stops ${busy === 1 ? 'it' : 'them'}. Claude conversations can be resumed later.`,
+          detail: `Quitting stops ${busy === 1 ? 'it' : 'them'}. ${
+            unfinished?.quitNote(claudeWorkspaces(busySessions)) ??
+            'Claude conversations can be resumed later.'
+          }`,
           buttons: ['Quit', 'Cancel'],
           defaultId: 0,
           cancelId: 1,
@@ -496,6 +532,8 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
         if (response !== 0) return;
       }
       if (status) status.quitting = true;
+      // What Claude was doing, before it stops (spec §9.7).
+      unfinished?.atQuit(claudeWorkspaces(host.list().filter((s) => s.status === 'running')));
       host.close();
       await host.stopAll();
       stopped = true;

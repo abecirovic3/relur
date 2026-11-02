@@ -1,4 +1,5 @@
 // biome-ignore-all lint/suspicious/noArrayIndexKey: the Guide's static content never reorders
+import { BRAND } from '@shared/brand';
 import { matchShortcut } from '@shared/shortcuts';
 import type { StatusGlyph as Glyph } from '@shared/status';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
@@ -55,6 +56,12 @@ const GLYPHS: [Glyph, string, string, string][] = [
   ],
   ['exited', 'Exited', 'Hollow square', 'The Claude process has ended. Start it again in its tab.'],
   ['error', 'Error', '✕', 'Something failed: setup, or Claude could not start.'],
+  [
+    'unfinished',
+    'Unfinished',
+    'Two bars',
+    `${BRAND.displayName} closed while Claude was at work there. Open it to continue or dismiss.`,
+  ],
 ];
 
 const kbdClass =

@@ -167,6 +167,9 @@ export class WorkspaceService {
     /** The `--settings` file for a profile's Claude (spec §9.3, §21.9). */
     private readonly settingsFile: (profileId: string) => string,
   ) {
+    // An unmarked state still saying Claude was at work means the app crashed
+    // (spec §9.7): a quit marks those itself.
+    records.markUnfinishedAfterCrash();
     // No Claude runs yet at launch; StatusService follows states from here (spec §10.2).
     records.resetRunningStates();
   }
@@ -272,6 +275,8 @@ export class WorkspaceService {
       unread: false,
       stateMessage: null,
       background: 0,
+      unfinished: null,
+      lastPrompt: null,
       stateSince: now,
       claudeSessionId: null,
       ports: null,
@@ -413,6 +418,8 @@ export class WorkspaceService {
       unread: false,
       stateMessage: null,
       background: 0,
+      unfinished: null,
+      lastPrompt: null,
       stateSince: now,
       claudeSessionId: null,
       ports: await allocatePorts(
