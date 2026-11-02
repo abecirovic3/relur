@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { remember } from './remember';
 
 const KEY = 'sidebar-linked-groups';
 
@@ -24,11 +25,7 @@ export function useLinkedDisclosure() {
         const next = current.includes(projectId)
           ? current.filter((id) => id !== projectId)
           : [...current, projectId];
-        try {
-          localStorage.setItem(KEY, JSON.stringify(next));
-        } catch {
-          // remembered for this run only
-        }
+        remember(KEY, JSON.stringify(next));
         return next;
       }),
   };

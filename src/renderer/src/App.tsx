@@ -39,6 +39,7 @@ import { trpcClient, useTRPC } from './trpc';
 import { button, iconButton, isMac, Kbd } from './ui/controls';
 import { LaunchingContext } from './ui/launching';
 import { useProjectDisclosure } from './ui/project-disclosure';
+import { remember } from './ui/remember';
 import { playAlert } from './ui/sounds';
 import { useNativeTheme } from './ui/theme';
 import {
@@ -399,11 +400,7 @@ export function App() {
     if (!profileId) return;
     setOverlayCollapsed((current) => {
       const next = { ...current, [profileId]: !current[profileId] };
-      try {
-        localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next));
-      } catch {
-        // remembered for this run only
-      }
+      remember(COLLAPSED_KEY, JSON.stringify(next));
       return next;
     });
   };

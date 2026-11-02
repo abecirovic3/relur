@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { BRAND, envVar } from '@shared/brand';
-import { app, BrowserWindow, nativeTheme, screen } from 'electron';
+import { app, BrowserWindow, nativeTheme, screen, session } from 'electron';
 
 /** The app icon for unpackaged runs, where no bundle supplies it (dev Dock, Linux window). */
 export const devIconPath = () => path.join(app.getAppPath(), 'build', 'icons', '512x512.png');
@@ -86,4 +86,24 @@ export function bringForward(win: BrowserWindow): void {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+}
+
+/**
+ * Puts the window's remembered preferences (its local storage) on disk now
+ * (spec §5). Chromium writes local storage on its own schedule; at the end of
+ * a desktop session every process of the app may be signalled at once, and
+ * the app can end, its helper processes gone, before Chromium got to it.
+ */
+export function saveWindowState(): void {
+  session.defaultSession.flushStorageData();
+}
+
+let saveSoon: NodeJS.Timeout | null = null;
+/** The window changed a remembered preference: on disk within a moment. */
+export function windowStateChanged(): void {
+  if (saveSoon) return;
+  saveSoon = setTimeout(() => {
+    saveSoon = null;
+    saveWindowState();
+  }, 200);
 }

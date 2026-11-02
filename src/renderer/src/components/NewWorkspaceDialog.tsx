@@ -7,6 +7,7 @@ import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { GuideLink } from '../guide/link';
 import { type AppRouterOutputs, useTRPC } from '../trpc';
 import { button, inputClass, Kbd, keyHint, labelClass } from '../ui/controls';
+import { remember } from '../ui/remember';
 import { Modal, ModalFooter } from './Modal';
 
 export type CreatedWorkspace = AppRouterOutputs['workspaces']['create'];
@@ -32,11 +33,7 @@ function rememberedAlsoIn(projectId: string): string[] {
   }
 }
 function rememberAlsoIn(projectId: string, ids: string[]): void {
-  try {
-    localStorage.setItem(alsoInKey(projectId), JSON.stringify(ids));
-  } catch {
-    // only a convenience
-  }
+  remember(alsoInKey(projectId), JSON.stringify(ids));
 }
 
 /**

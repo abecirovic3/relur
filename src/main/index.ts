@@ -7,7 +7,7 @@ import { BRAND, envVar } from '@shared/brand';
 import { planLimitReached } from '@shared/unfinished';
 import { LATEST_RELEASE_URL } from '@shared/updates';
 import { parseRateLimits } from '@shared/usage';
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, dialog, powerMonitor, shell } from 'electron';
 import { HookBridge } from './bridge/server';
 import { FinishService, PR_POLL_MS } from './changes/finish';
 import { claudeSettings, writeClaudeSettings } from './claude/settings';
@@ -45,7 +45,13 @@ import { serveTrpcOverIpc } from './trpc/electron';
 import { UnfinishedService } from './unfinished/service';
 import { startUpdate } from './updates/install';
 import { skippedStore, UpdateService } from './updates/service';
-import { bringForward, createMainWindow, devIconPath, testWindows } from './window';
+import {
+  bringForward,
+  createMainWindow,
+  devIconPath,
+  saveWindowState,
+  testWindows,
+} from './window';
 import { TaskLookupService } from './workflow/lookup';
 import { WorkflowSetupService } from './workflow/propose';
 import { WorkflowService } from './workflow/service';
@@ -566,16 +572,24 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
   // quits completely.
   let stopped = false;
   let asking = false;
-  // A SIGTERM (logout, a test runner) quits without asking: nobody is there to answer.
+  // A SIGTERM (logout, a test runner) or SIGHUP (the end of the desktop
+  // session) quits without asking: nobody is there to answer. The window's
+  // remembered preferences go to disk first, before anything else: at logout
+  // every process of the app is signalled at once, and the app may not get far.
   let askBeforeQuit = true;
+  const quitBySignal = () => {
+    saveWindowState();
+    askBeforeQuit = false;
+    app.quit();
+  };
   // Chromium installs its own SIGTERM handler during startup, which quits like
   // ⌘Q (and so asks); this one replaces it once the app is ready.
   app.whenReady().then(() => {
     process.removeAllListeners('SIGTERM');
-    process.on('SIGTERM', () => {
-      askBeforeQuit = false;
-      app.quit();
-    });
+    process.on('SIGTERM', quitBySignal);
+    process.removeAllListeners('SIGHUP');
+    process.on('SIGHUP', quitBySignal);
+    powerMonitor.on('shutdown', saveWindowState);
   });
   app.on('before-quit', (event) => {
     if (stopped || host.runningCount() === 0) {

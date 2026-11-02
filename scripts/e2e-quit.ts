@@ -9,7 +9,7 @@
  */
 import './lib/clean-env';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { appConfigDir } from '../src/main/paths';
@@ -22,6 +22,7 @@ import {
   clickButtonText,
   dialogText,
   launchApp,
+  pressShortcut,
   type RunningApp,
   sleep,
   waitForFile,
@@ -245,6 +246,43 @@ exec sleep 600
       await assertGone(running, processes, fx.root, 'closing the window on Linux');
       assert.equal(fs.existsSync(nativeDialogs), false, 'no question');
       app = undefined;
+      // The end of a desktop session (spec §5): every process of the app is
+      // signalled at once, or its display goes away. What the window
+      // remembers (here the Home panel, collapsed) was on disk already.
+      const remembered = `localStorage.getItem('quick-actions-collapsed')`;
+      for (const end of ['every process signalled', 'the display gone'] as const) {
+        let display: ChildProcess | null = null;
+        let env = withDisplayEnv(fx.env);
+        if (end === 'the display gone') {
+          display = spawn('Xvfb', [':93', '-screen', '0', '1440x900x24', '-nolisten', 'tcp'], {
+            stdio: 'ignore',
+          });
+          await sleep(1000);
+          env = { ...env, DISPLAY: ':93' };
+          delete env.XAUTHORITY;
+        }
+        const running = await launchApp({ env, dev: devMode, electronArgs });
+        app = running;
+        const before = await running.page.eval<string | null>(remembered);
+        await pressShortcut(running.page, 'homePanel');
+        await running.page.waitFor(`${remembered} !== ${JSON.stringify(before)}`, 'the change');
+        const changed = await running.page.eval<string | null>(remembered);
+        // A moment later, as no one logs out within a fraction of a second.
+        await sleep(1000);
+        running.page.close();
+        running.main.close();
+        if (display) display.kill('SIGTERM');
+        else process.kill(-(running.process.pid as number), 'SIGTERM');
+        if (!(await running.exited(20_000))) await running.terminate();
+        app = undefined;
+        const again = await launchApp({ env: withDisplayEnv(fx.env), dev: devMode, electronArgs });
+        app = again;
+        assert.equal(await again.page.eval(remembered), changed, `kept with ${end}`);
+        again.page.close();
+        again.main.close();
+        assert.equal(await again.stop(), false, 'the app quit by itself');
+        app = undefined;
+      }
     }
     console.log(`e2e quit test passed (${devMode ? 'dev server' : 'production build'})`);
   } catch (error) {

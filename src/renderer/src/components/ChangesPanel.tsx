@@ -14,6 +14,7 @@ import {
 } from 'react';
 import { trpcClient, useTRPC } from '../trpc';
 import { button, iconButton, inputClass, isMac, keyHint } from '../ui/controls';
+import { remember } from '../ui/remember';
 import { PrimaryTag } from './DeleteWorkspaceDialog';
 import { useOpenInEditor } from './EditorPicker';
 
@@ -616,14 +617,6 @@ function stored(key: string): string | null {
     return null;
   }
 }
-function store(key: string, value: string | null): void {
-  try {
-    if (value === null) localStorage.removeItem(key);
-    else localStorage.setItem(key, value);
-  } catch {
-    // kept for this run only
-  }
-}
 
 const storedStyle = (): DiffStyle => (stored(STYLE_KEY) === 'split' ? 'split' : 'unified');
 
@@ -642,7 +635,7 @@ function useDiffStyle(): [DiffStyle, (style: DiffStyle) => void] {
     style,
     (next) => {
       setStyle(next);
-      store(STYLE_KEY, next);
+      remember(STYLE_KEY, next);
     },
   ];
 }
@@ -670,7 +663,7 @@ function useStoredSize(key: string): [number | null, (size: number | null) => vo
     size,
     (next) => {
       setSize(next);
-      store(key, next === null ? null : String(Math.round(next)));
+      remember(key, next === null ? null : String(Math.round(next)));
     },
   ];
 }
@@ -682,7 +675,7 @@ export function useListCollapsed(): [boolean, () => void] {
     collapsed,
     () =>
       setCollapsed((current) => {
-        store(LIST_COLLAPSED_KEY, current ? null : '1');
+        remember(LIST_COLLAPSED_KEY, current ? null : '1');
         return !current;
       }),
   ];
@@ -1109,11 +1102,11 @@ function ChangesFrame({
   };
   const onDragEnd = () => {
     if (!drag.current) return;
-    store(WIDTH_KEY, String(Math.round(drag.current.now)));
+    remember(WIDTH_KEY, String(Math.round(drag.current.now)));
     drag.current = null;
   };
   const reset = () => {
-    store(WIDTH_KEY, null);
+    remember(WIDTH_KEY, null);
     setWidth(defaultWidth(narrow));
   };
   return (

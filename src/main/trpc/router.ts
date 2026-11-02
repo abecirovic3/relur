@@ -44,6 +44,7 @@ import type { Alert, ConversationEvent, StatusService } from '../status/service'
 import type { UnfinishedService } from '../unfinished/service';
 import type { UpdateAction } from '../updates/install';
 import type { UpdateService } from '../updates/service';
+import { windowStateChanged } from '../window';
 import type { WorkflowSetupService } from '../workflow/propose';
 import type { WorkflowService } from '../workflow/service';
 import type { NewWorktree, WorktreeNotices } from '../worktrees/notices';
@@ -1100,6 +1101,8 @@ export function createAppRouter({
           }),
         )
         .mutation(({ input, ctx }) => showContextMenu(windowOf(ctx.windowId), input.items)),
+      /** The window changed a remembered preference in its local storage (spec §5). */
+      remembered: publicProcedure.mutation(() => windowStateChanged()),
     }),
 
     /** The renderer has no clipboard permission; terminals copy and paste through here. */
