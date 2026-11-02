@@ -4,7 +4,7 @@
  * the Node inspector. Test use only; packaged builds disable both (M7).
  */
 import assert from 'node:assert/strict';
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -191,46 +191,11 @@ export interface RunningApp {
   exited(timeoutMs?: number): Promise<boolean>;
 }
 
-/** The frontmost app on macOS, to give focus back to after launching. */
-function frontmostApp(): string | null {
-  if (process.platform !== 'darwin') return null;
-  try {
-    const asn = execFileSync('lsappinfo', ['front'], { encoding: 'utf8' }).trim();
-    const info = execFileSync('lsappinfo', ['info', '-only', 'bundleid', asn], {
-      encoding: 'utf8',
-    });
-    return /"CFBundleIdentifier"="([^"]+)"/.exec(info)?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Keeps the test window out of the way of someone using the machine: fully
- * transparent, letting mouse events through, and not holding the keyboard
- * focus. The renderer keeps running, and CDP input and screenshots still work.
- */
-async function moveOutOfTheWay(main: Cdp, previousApp: string | null): Promise<void> {
-  await main.eval(`(() => {
-    const { BrowserWindow } = process.mainModule.require('electron');
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.setOpacity(0);
-      win.setIgnoreMouseEvents(true);
-    }
-  })()`);
-  if (previousApp) {
-    try {
-      execFileSync('open', ['-b', previousApp]);
-    } catch {
-      // focus stays with the test window
-    }
-  }
-}
-
 /**
  * Starts the production build in out/ (or `electron-vite dev` with `dev`) and
  * connects to it once the UI is ready. With `visible: false` (the default)
- * the window is kept out of the way; see moveOutOfTheWay.
+ * the app keeps its window away from the real mouse and keyboard
+ * (`testWindows` in src/main/window.ts): input comes only from here.
  */
 export async function launchApp(options: {
   env: Record<string, string>;
@@ -249,8 +214,6 @@ export async function launchApp(options: {
   ];
   // E2E_VISIBLE=1 shows test windows normally, for debugging the tests themselves.
   const visible = options.visible || process.env.E2E_VISIBLE === '1';
-  const previousApp = visible ? null : frontmostApp();
-  // The app shows its window in the background from the start (src/main/window.ts).
   const env = visible ? options.env : { ...options.env, [envVar('TEST_WINDOW')]: 'background' };
   const extra = options.electronArgs ?? [];
   const bin = (name: string) => path.join(appDir, 'node_modules', '.bin', name);
@@ -364,7 +327,6 @@ export async function launchApp(options: {
     const main = new Cdp(await debuggerUrl(inspectPort));
     await main.send('Runtime.enable');
     electronPid = await main.eval<number>('process.pid');
-    if (!visible) await moveOutOfTheWay(main, previousApp);
     return {
       process: child,
       page,

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { BRAND, envVar } from '@shared/brand';
-import { app, BrowserWindow, nativeTheme } from 'electron';
+import { app, BrowserWindow, nativeTheme, screen } from 'electron';
 
 /** The app icon for unpackaged runs, where no bundle supplies it (dev Dock, Linux window). */
 export const devIconPath = () => path.join(app.getAppPath(), 'build', 'icons', '512x512.png');
@@ -9,10 +9,29 @@ export const devIconPath = () => path.join(app.getAppPath(), 'build', 'icons', '
 export const linuxIconPath = () =>
   app.isPackaged ? path.join(process.resourcesPath, 'icon.png') : devIconPath();
 
+/**
+ * Scripted test runs (scripts/lib/app-driver.ts) keep their windows away from
+ * the real mouse and keyboard of someone using the machine: placed beyond
+ * every screen, unable to take the focus, transparent and letting the mouse
+ * through. Input comes only from the driver, over the DevTools protocol.
+ */
+export const testWindows = () => process.env[envVar('TEST_WINDOW')] === 'background';
+
+const WIDTH = 1280;
+const HEIGHT = 800;
+
+/** Left of every screen, with room to spare: no pointer gets there. */
+function offScreen(): { x: number; y: number } {
+  const left = Math.min(...screen.getAllDisplays().map((d) => d.bounds.x));
+  return { x: left - WIDTH - 2000, y: 0 };
+}
+
 export function createMainWindow(): BrowserWindow {
+  const background = testWindows();
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: WIDTH,
+    height: HEIGHT,
+    ...(background ? { ...offScreen(), focusable: false, enableLargerThanScreen: true } : {}),
     minWidth: 720,
     minHeight: 480,
     show: false,
@@ -34,10 +53,6 @@ export function createMainWindow(): BrowserWindow {
     },
   });
 
-  // Scripted tests run the window in the background: shown without taking focus,
-  // transparent and letting the mouse through, so it never catches the keys or
-  // clicks of someone using the machine (scripts/lib/app-driver.ts).
-  const background = process.env[envVar('TEST_WINDOW')] === 'background';
   win.once('ready-to-show', () => {
     if (!background) {
       win.show();
@@ -46,6 +61,8 @@ export function createMainWindow(): BrowserWindow {
     win.setOpacity(0);
     win.setIgnoreMouseEvents(true);
     win.showInactive();
+    // macOS may move a window onto a screen as it is shown.
+    win.setPosition(offScreen().x, offScreen().y);
   });
 
   const devUrl = process.env.ELECTRON_RENDERER_URL;
@@ -55,4 +72,18 @@ export function createMainWindow(): BrowserWindow {
     void win.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
   return win;
+}
+
+/**
+ * Brings the window to the front with the focus, as a click on the Dock icon
+ * does; in scripted test runs it stays where it is, without the focus.
+ */
+export function bringForward(win: BrowserWindow): void {
+  if (testWindows()) {
+    if (!win.isVisible()) win.showInactive();
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 }

@@ -45,7 +45,7 @@ import { serveTrpcOverIpc } from './trpc/electron';
 import { UnfinishedService } from './unfinished/service';
 import { startUpdate } from './updates/install';
 import { skippedStore, UpdateService } from './updates/service';
-import { createMainWindow, devIconPath } from './window';
+import { bringForward, createMainWindow, devIconPath, testWindows } from './window';
 import { TaskLookupService } from './workflow/lookup';
 import { WorkflowSetupService } from './workflow/propose';
 import { WorkflowService } from './workflow/service';
@@ -79,6 +79,9 @@ if (migration.kind === 'old-app-running') {
 app.setPath('userData', configDir);
 app.setPath('sessionData', path.join(configDir, 'session'));
 if (process.platform === 'win32') app.setAppUserModelId(BRAND.bundleId);
+// Scripted test runs: no Dock icon, and never the active app, so no key or
+// menu shortcut of someone using the machine reaches it (window.ts).
+if (testWindows() && process.platform === 'darwin') app.setActivationPolicy('accessory');
 
 let mainWindow: BrowserWindow | null = null;
 let env: EnvService;
@@ -176,8 +179,7 @@ async function selfTestCheck(): Promise<string | null> {
 
 function showMainWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+    bringForward(mainWindow);
     return;
   }
   const win = createMainWindow();
@@ -594,7 +596,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       if (busy > 0 && askBeforeQuit && quitAsker.listenerCount('request') > 0 && mainWindow) {
         // The design's dialog in the window, listing each session (spec §5).
         asking = true;
-        mainWindow.show();
+        bringForward(mainWindow);
         const quit = await new Promise<boolean>((resolve) => {
           answerQuit = resolve;
           quitAsker.emit(
