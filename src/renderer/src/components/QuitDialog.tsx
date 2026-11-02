@@ -37,7 +37,7 @@ export function QuitDialog({
     rows.flatMap((session) => {
       const workspace =
         session.kind === 'claude' ? workspaces.find((w) => w.id === session.workspaceId) : null;
-      const kind = workspace ? unfinishedKind(workspace.state) : null;
+      const kind = workspace ? unfinishedKind(workspace.state, workspace.background) : null;
       if (!workspace || !kind) return [];
       const profile = profiles.find((p) => p.id === workspace.profileId);
       return [{ kind, continues: !!profile?.resume.continueAtStart }];

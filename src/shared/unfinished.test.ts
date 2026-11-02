@@ -7,8 +7,11 @@ import {
   planLimitReached,
   quitNextStep,
   resumePrompt,
+  stoppedNote,
   tickedByDefault,
   unfinishedKind,
+  unfinishedReason,
+  unfinishedTooltip,
 } from './unfinished';
 
 describe('unfinishedKind (spec §9.7)', () => {
@@ -28,6 +31,27 @@ describe('unfinishedKind (spec §9.7)', () => {
       'error',
     ];
     for (const state of others) expect(unfinishedKind(state)).toBeNull();
+  });
+
+  it('counts Done only while background commands still ran', () => {
+    expect(unfinishedKind('done', 2)).toBe('commands');
+    expect(unfinishedKind('done', 0)).toBeNull();
+    expect(unfinishedKind('needs-input', 1)).toBeNull();
+    expect(stoppedNote(1)).toBe('1 background command was stopped');
+    expect(stoppedNote(3)).toBe('3 background commands were stopped');
+    expect(unfinishedReason({ kind: 'commands', stopped: 2 })).toBe(
+      '2 background commands were stopped',
+    );
+    expect(unfinishedTooltip({ kind: 'commands', stopped: 1 })).toMatch(
+      /closed: 1 background command was stopped$/,
+    );
+  });
+
+  it('never continues stopped commands by itself, and offers them unticked', () => {
+    expect(continuesAtStart('commands')).toBe(false);
+    expect(tickedByDefault('commands')).toBe(false);
+    expect(canContinue('commands')).toBe(true);
+    expect(quitNextStep([{ kind: 'commands', continues: true }])).toMatch(/^You'll be asked/);
   });
 });
 

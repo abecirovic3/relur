@@ -5,23 +5,27 @@ import type { UsageSnapshot } from './usage';
 /**
  * Why Claude didn't finish when the app stopped (spec §9.7): it was working
  * (also while waiting for its own background agents), the user had pressed
- * Esc, or it was asking for permission.
+ * Esc, it was asking for permission, or it was Done while commands it
+ * started in the background still ran, which the stop ended.
  */
-export type UnfinishedKind = 'working' | 'interrupted' | 'permission';
+export type UnfinishedKind = 'working' | 'interrupted' | 'permission' | 'commands';
 
 /** A workspace's Unfinished marker (spec §9.7). */
 export interface Unfinished {
   kind: UnfinishedKind;
   /** When the app stopped (for a crash: the workspace's last activity). */
   since: string;
+  /** For `commands`: how many of Claude's background commands the stop ended; else 0. */
+  stopped: number;
 }
 
 /**
  * Whether a workspace in this state when the app stops counts as unfinished,
- * and why (spec §9.7). Done and waiting for input don't count, nor does a gate
- * (Awaiting approval is worked out from Done or Waiting for input).
+ * and why (spec §9.7). Waiting for input doesn't count, nor does a gate
+ * (Awaiting approval is worked out from Done or Waiting for input); Done
+ * counts only while Claude's background commands still ran (`background`, §10.2).
  */
-export function unfinishedKind(state: WorkspaceState): UnfinishedKind | null {
+export function unfinishedKind(state: WorkspaceState, background = 0): UnfinishedKind | null {
   switch (state) {
     case 'working':
       return 'working';
@@ -29,10 +33,16 @@ export function unfinishedKind(state: WorkspaceState): UnfinishedKind | null {
       return 'interrupted';
     case 'needs-permission':
       return 'permission';
+    case 'done':
+      return background > 0 ? 'commands' : null;
     default:
       return null;
   }
 }
+
+/** "1 background command was stopped", "2 background commands were stopped". */
+export const stoppedNote = (n: number) =>
+  n === 1 ? '1 background command was stopped' : `${n} background commands were stopped`;
 
 /** The default continue prompt (spec §3.1, §9.7). */
 export const DEFAULT_RESUME_PROMPT = `${BRAND.displayName} was closed while you were working, which stopped any commands or background agents you had running. Continue where you left off.`;
@@ -40,17 +50,29 @@ export const DEFAULT_RESUME_PROMPT = `${BRAND.displayName} was closed while you 
 /** The marker's tooltip (spec §9.7). */
 export const UNFINISHED_TOOLTIP = `Claude didn't finish when ${BRAND.displayName} closed`;
 
-/** What each kind means, in the overview and the bar (spec §9.7). */
-export const UNFINISHED_LABEL: Record<UnfinishedKind, string> = {
-  working: 'Was working',
-  interrupted: 'Interrupted with Esc',
-  permission: 'Was asking for permission',
-};
+/** What a marker means, in the overview (spec §9.7). */
+export function unfinishedReason(u: Pick<Unfinished, 'kind' | 'stopped'>): string {
+  switch (u.kind) {
+    case 'working':
+      return 'Was working';
+    case 'interrupted':
+      return 'Interrupted with Esc';
+    case 'permission':
+      return 'Was asking for permission';
+    case 'commands':
+      return stoppedNote(u.stopped);
+  }
+}
+
+/** The marker's tooltip, with the stopped commands where there were some (spec §9.7). */
+export const unfinishedTooltip = (u: Pick<Unfinished, 'kind' | 'stopped'> | null) =>
+  u?.kind === 'commands' ? `${UNFINISHED_TOOLTIP}: ${stoppedNote(u.stopped)}` : UNFINISHED_TOOLTIP;
 
 /**
- * Only Working is continued without the user choosing it; Esc-interrupted is
- * offered unticked; a permission has to be given again in the session, so it
- * can't be continued at all (spec §9.7).
+ * Only Working is continued without the user choosing it; Esc-interrupted
+ * work and stopped background commands (a command Claude waited for and a
+ * dev server look the same) are offered unticked; a permission has to be
+ * given again in the session, so it can't be continued at all (spec §9.7).
  */
 export const continuesAtStart = (kind: UnfinishedKind) => kind === 'working';
 export const tickedByDefault = (kind: UnfinishedKind) => kind === 'working';

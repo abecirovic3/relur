@@ -35,6 +35,7 @@ interface Row {
   has_commits: number;
   unfinished: string | null;
   unfinished_at: string | null;
+  unfinished_stopped: number;
   last_prompt: string | null;
 }
 
@@ -93,6 +94,7 @@ const UNFINISHED_KINDS: readonly string[] = [
   'working',
   'interrupted',
   'permission',
+  'commands',
 ] satisfies UnfinishedKind[];
 
 const toWorkspace = (row: Row, linked: WorkspaceRepo[] = []): Workspace => ({
@@ -111,7 +113,11 @@ const toWorkspace = (row: Row, linked: WorkspaceRepo[] = []): Workspace => ({
   background: row.background,
   unfinished:
     row.unfinished && UNFINISHED_KINDS.includes(row.unfinished)
-      ? { kind: row.unfinished as UnfinishedKind, since: row.unfinished_at ?? row.created_at }
+      ? {
+          kind: row.unfinished as UnfinishedKind,
+          since: row.unfinished_at ?? row.created_at,
+          stopped: row.unfinished_stopped ?? 0,
+        }
       : null,
   lastPrompt: row.last_prompt,
   claudeSessionId: row.claude_session_id,
@@ -412,41 +418,52 @@ export class WorkspaceRecords {
   /**
    * Marks the workspace unfinished (spec §9.7), as new for the next start; a
    * workspace already marked keeps its marker and time. Null clears it
-   * (Continue, Dismiss).
+   * (Continue, Dismiss). `stopped` counts the background commands the stop ended.
    */
-  setUnfinished(id: string, kind: UnfinishedKind | null, at = new Date()): void {
+  setUnfinished(
+    id: string,
+    kind: UnfinishedKind | null,
+    { stopped = 0, at = new Date() }: { stopped?: number; at?: Date } = {},
+  ): void {
     const result =
       kind === null
         ? this.prepare(
-            `UPDATE workspaces SET unfinished = NULL, unfinished_at = NULL, unfinished_new = 0
+            `UPDATE workspaces SET unfinished = NULL, unfinished_at = NULL, unfinished_new = 0,
+                 unfinished_stopped = 0
                WHERE id = ? AND unfinished IS NOT NULL`,
           ).run(id)
         : this.prepare(
-            `UPDATE workspaces SET unfinished = ?, unfinished_at = ?, unfinished_new = 1
+            `UPDATE workspaces SET unfinished = ?, unfinished_at = ?, unfinished_new = 1,
+                 unfinished_stopped = ?
                WHERE id = ? AND archived_at IS NULL`,
-          ).run(kind, at.toISOString(), id);
+          ).run(kind, at.toISOString(), kind === 'commands' ? stopped : 0, id);
     if (result.changes > 0) this.events.emit('change');
   }
 
   /**
    * At app start, before states are reset (spec §9.7): a quit marks the
-   * workspaces Claude was working in, interrupted or asking for permission,
-   * so one whose stored state still says so without a marker was left by a
-   * crash. It counts the same, since its last activity.
+   * workspaces Claude was working in, interrupted, asking for permission or
+   * Done in with background commands running, so one whose stored state
+   * still says so without a marker was left by a crash. It counts the same,
+   * since its last activity.
    */
   markUnfinishedAfterCrash(): void {
     const rows = this.prepare(
-      `SELECT id, status, last_activity_at, created_at FROM workspaces
+      `SELECT id, status, background, last_activity_at, created_at FROM workspaces
          WHERE archived_at IS NULL AND unfinished IS NULL`,
-    ).all() as Pick<Row, 'id' | 'status' | 'last_activity_at' | 'created_at'>[];
+    ).all() as Pick<Row, 'id' | 'status' | 'background' | 'last_activity_at' | 'created_at'>[];
     const mark = this.prepare(
-      `UPDATE workspaces SET unfinished = ?, unfinished_at = ?, unfinished_new = 1 WHERE id = ?`,
+      `UPDATE workspaces SET unfinished = ?, unfinished_at = ?, unfinished_new = 1,
+         unfinished_stopped = ? WHERE id = ?`,
     );
     for (const row of rows) {
       const kind = STATES.includes(row.status)
-        ? unfinishedKind(row.status as WorkspaceState)
+        ? unfinishedKind(row.status as WorkspaceState, row.background)
         : null;
-      if (kind) mark.run(kind, row.last_activity_at ?? row.created_at, row.id);
+      if (kind) {
+        const stopped = kind === 'commands' ? row.background : 0;
+        mark.run(kind, row.last_activity_at ?? row.created_at, stopped, row.id);
+      }
     }
   }
 

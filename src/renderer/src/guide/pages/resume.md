@@ -22,9 +22,10 @@ Quitting, logging out, an update with `install.sh` or a crash stops Claude in th
 
 - **Working**, including while it waited for its own background agents;
 - **interrupted with <kbd>Esc</kbd>** by you, just before the stop: it's never continued unless you choose so;
-- **asking for permission**: never continued by itself; give the permission again in the workspace.
+- **asking for permission**: never continued by itself; give the permission again in the workspace;
+- **Done, with commands still running in the background** (the sidebar showed **1 running**): quitting stops them. {{app}} can't tell a command Claude waits for from a dev server, so it's up to you: such a workspace is marked "1 background command was stopped" and never continued unless you choose it. Continuing tells Claude its commands were stopped, so it can run again what it needs.
 
-Done and Waiting for input don't count. After a crash, a workspace that was still Working counts the same.
+Done without background commands, and Waiting for input, don't count. After a crash, a workspace that was still Working counts the same.
 
 The quit dialog says what comes next: "They'll continue when {{app}} starts again" or "You'll be asked when {{app}} starts again".
 
@@ -32,7 +33,7 @@ The quit dialog says what comes next: "They'll continue when {{app}} starts agai
 
 With **Continue interrupted work when {{app}} starts** on in [Edit profile › General](edit-profile) (off at first), {{app}} sends the profile's continue prompt to each workspace that was Working, once Claude has resumed there: one after another, a few seconds apart, and never while your [plan usage](plan-usage) is at its limit. A notice above the terminal lists them; **Stop** cancels the ones not sent yet, which stay unfinished. The default prompt tells Claude that {{app}} was closed while it worked, which stopped its commands and background agents, and to continue where it left off; you can edit it there.
 
-Otherwise, and for anything else left unfinished, {{app}} asks once at start, after the sessions have resumed: **Claude didn't finish in n workspaces**, grouped by profile, with each workspace's task, project, last prompt and when it stopped. Working ones are ticked, ones you interrupted with <kbd>Esc</kbd> aren't, and a permission request has no checkbox. **Continue selected** (<kbd>{{key:confirm}}</kbd>) sends the continue prompt to the ticked ones, the same way; it's disabled, with the reason, while plan usage is at its limit. **Not now** (<kbd>Esc</kbd>) leaves them as they are, and **Open** goes to that workspace.
+Otherwise, and for anything else left unfinished, {{app}} asks once at start, after the sessions have resumed: **Claude didn't finish in n workspaces**, grouped by profile, with each workspace's task, project, last prompt and when it stopped. Working ones are ticked; ones you interrupted with <kbd>Esc</kbd>, and ones whose background commands were stopped, aren't; a permission request has no checkbox. **Continue selected** (<kbd>{{key:confirm}}</kbd>) sends the continue prompt to the ticked ones, the same way; it's disabled, with the reason, while plan usage is at its limit. **Not now** (<kbd>Esc</kbd>) leaves them as they are, and **Open** goes to that workspace.
 
 ## The Unfinished marker
 

@@ -122,8 +122,8 @@ export class UnfinishedService {
   atQuit(workspaceIds: string[]): void {
     for (const id of workspaceIds) {
       const workspace = this.deps.records.get(id);
-      const kind = workspace ? unfinishedKind(workspace.state) : null;
-      if (kind) this.deps.records.setUnfinished(id, kind);
+      const kind = workspace ? unfinishedKind(workspace.state, workspace.background) : null;
+      if (kind) this.deps.records.setUnfinished(id, kind, { stopped: workspace?.background });
     }
   }
 
@@ -135,7 +135,7 @@ export class UnfinishedService {
     return quitNextStep(
       workspaceIds.flatMap((id) => {
         const workspace = this.deps.records.get(id);
-        const kind = workspace ? unfinishedKind(workspace.state) : null;
+        const kind = workspace ? unfinishedKind(workspace.state, workspace.background) : null;
         if (!workspace || !kind) return [];
         return [{ kind, continues: !!this.deps.settings(workspace.profileId)?.continueAtStart }];
       }),

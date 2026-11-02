@@ -4,7 +4,7 @@ import {
   canContinue,
   planLimitReached,
   tickedByDefault,
-  UNFINISHED_LABEL,
+  unfinishedReason,
 } from '@shared/unfinished';
 import type { UsageSnapshot } from '@shared/usage';
 import type { Workspace } from '@shared/workspaces';
@@ -46,7 +46,9 @@ export function UnfinishedDialog({
 }) {
   const rows = workspaceIds.flatMap((id) => {
     const w = workspaces.find((x) => x.id === id);
-    return w?.unfinished ? [{ w, kind: w.unfinished.kind, since: w.unfinished.since }] : [];
+    return w?.unfinished
+      ? [{ w, kind: w.unfinished.kind, since: w.unfinished.since, marker: w.unfinished }]
+      : [];
   });
   const [ticked, setTicked] = useState(
     () => new Set(rows.filter((r) => tickedByDefault(r.kind)).map((r) => r.w.id)),
@@ -88,7 +90,7 @@ export function UnfinishedDialog({
                 {profile.name}
               </h3>
               <ul className="divide-y divide-line rounded-lg border border-line text-md">
-                {group.map(({ w, kind, since }) => (
+                {group.map(({ w, kind, since, marker }) => (
                   <li
                     key={w.id}
                     data-unfinished-row={w.id}
@@ -136,7 +138,7 @@ export function UnfinishedDialog({
                       <span
                         className={`text-sm ${kind === 'permission' ? 'text-st-permission' : 'text-fg-muted'}`}
                       >
-                        {UNFINISHED_LABEL[kind]}
+                        {unfinishedReason(marker)}
                       </span>
                       <span className="font-mono text-xs text-fg-subtle">
                         stopped {timeOf(since)}

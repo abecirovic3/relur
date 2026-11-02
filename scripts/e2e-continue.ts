@@ -80,6 +80,8 @@ while IFS= read -r line; do
   case "$line" in
     prompt) printf '\\342\\235\\257 Fix the login\\n'; hook UserPromptSubmit '{"prompt":"Fix the login"}' ;;
     permission) hook Notification '{"message":"Claude needs your permission to use Bash"}' ;;
+    # Done with a command still running in the background (spec §10.2).
+    background) hook Stop '{"background_tasks":[{"type":"shell","status":"running"}]}' ;;
     *) printf '%s\\n' "$line" >> "$HOME/input-$name.txt" ;;
   esac
 done
@@ -344,6 +346,22 @@ exec sleep 600
       readConfig().profiles.find((p: { id: string }) => p.id === 'work').resume,
       undefined,
     );
+    // Delta (Personal) is Done with a command still running; Personal continues
+    // at start, but stopped commands are never continued by themselves.
+    await pressKey(page, 'Digit2', CMD);
+    await open(page, 'Delta', 'notes');
+    await typeInTerminal(page, 'prompt');
+    await waitState(page, 'Delta', 'Working');
+    await typeInTerminal(page, 'background');
+    await page.waitFor(
+      `!!(${row('Delta')})?.querySelector('[data-background="1"]')`,
+      'Delta: Done, 1 running',
+    );
+    await openEditProfile(running, 'Personal');
+    await page.eval(`document.querySelector('#edit-profile-continue').click()`);
+    await submitDialog(page);
+    await page.waitFor(`!document.querySelector('dialog[open]')`, 'Edit profile to close');
+    await pressKey(page, 'Digit1', CMD);
     await quit(running, /You'll be asked when \w+ starts again\./);
 
     // 3. Setting off: no notice; the overview, and Continue selected (⌘↵).
@@ -355,12 +373,23 @@ exec sleep 600
       20_000,
     );
     assert.equal(await page.eval(`document.querySelector('[data-continue-notice]')`), null);
-    // Only what this stop left unfinished: Delta's marker is from before.
-    assert.deepEqual(
-      await page.eval<string[]>(
-        `[...document.querySelectorAll('[data-unfinished-row]')].map((r) => r.dataset.unfinishedRow)`,
+    // Only what this stop left unfinished; Delta's stopped command unticked, with its note.
+    const overviewRows = await page.eval<{ id: string; kind: string; box: boolean | null }[]>(
+      `[...document.querySelectorAll('[data-unfinished-row]')].map((r) => ({
+        id: r.dataset.unfinishedRow, kind: r.dataset.kind,
+        box: r.querySelector('input[type=checkbox]')?.checked ?? null }))`,
+    );
+    assert.deepEqual(overviewRows, [
+      { id: ids.Alpha, kind: 'working', box: true },
+      { id: ids.Bravo, kind: 'interrupted', box: false },
+      { id: ids.Charlie, kind: 'permission', box: null },
+      { id: ids.Delta, kind: 'commands', box: false },
+    ]);
+    assert.match(
+      await page.eval<string>(
+        `document.querySelector('[data-unfinished-row="${ids.Delta}"]').innerText`,
       ),
-      [ids.Alpha, ids.Bravo, ids.Charlie],
+      /1 background command was stopped/,
     );
     await pressKey(page, 'Enter', CMD);
     await page.waitFor(`!document.querySelector('dialog[open]')`, 'the overview to close');
@@ -369,12 +398,30 @@ exec sleep 600
     assert.equal(continued('alpha'), 2, 'Alpha got the continue prompt again, once');
     assert.equal(continued('bravo'), 1, 'Bravo was unticked');
     assert.equal(continued('charlie'), 0);
+    assert.equal(continued('delta'), 0, 'Delta was unticked, and never continued by itself');
     await page.eval(
       `document.querySelector('[data-nav-key="p:api"] button[aria-label="Expand"]')?.click()`,
     );
     await page.waitFor(`(${marker('Alpha')}) === null`, 'Alpha continued');
     assert.equal(await page.eval(marker('Bravo')), 'interrupted');
     assert.equal(await page.eval(marker('Charlie')), 'permission');
+    // Delta's marker and bar say what was stopped; its Continue sends the prompt.
+    await pressKey(page, 'Digit2', CMD);
+    await open(page, 'Delta', 'notes');
+    assert.equal(await page.eval(marker('Delta')), 'commands');
+    assert.match(
+      await page.eval<string>(`(${row('Delta')}).title`),
+      /didn't finish when \w+ closed: 1 background command was stopped/,
+    );
+    await page.waitFor(
+      `document.querySelector('[data-unfinished-bar="commands"]')?.innerText.includes('1 background command was stopped.')`,
+      "Delta's bar",
+    );
+    await clickButtonText(page, 'Continue', `document.querySelector('[data-unfinished-bar]')`);
+    await page.waitFor(`!document.querySelector('[data-unfinished-bar]')`, 'Delta continued');
+    for (let i = 0; i < 50 && continued('delta') < 1; i++) await sleep(100);
+    assert.equal(continued('delta'), 1);
+    await pressKey(page, 'Digit1', CMD);
     // Claude resumed once per start in each workspace.
     assert.equal(starts('alpha'), 3);
     assertNoUncaught('the restarts');

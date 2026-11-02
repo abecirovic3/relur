@@ -7,7 +7,7 @@ import {
   glyphFor,
   STATE_LABEL,
 } from '@shared/status';
-import { UNFINISHED_TOOLTIP, workspaceGlyph } from '@shared/unfinished';
+import { unfinishedTooltip, workspaceGlyph } from '@shared/unfinished';
 import { linkedRepos, type Workspace } from '@shared/workspaces';
 import { type KeyboardEvent, useRef, useState } from 'react';
 import { trpcClient } from '../trpc';
@@ -45,7 +45,7 @@ const LABEL_COLOR: Partial<Record<Workspace['state'], string>> = {
  */
 function rowTooltip(w: Workspace, glyph: Glyph | null): string {
   // The Unfinished marker (spec §9.7) says why instead.
-  if (glyph === 'unfinished') return `${w.name}\n${UNFINISHED_TOOLTIP} · ${w.branch}`;
+  if (glyph === 'unfinished') return `${w.name}\n${unfinishedTooltip(w.unfinished)} · ${w.branch}`;
   const state =
     w.state === 'awaiting-approval' && w.workflow?.label
       ? `${STATE_LABEL[w.state]}: ${w.workflow.label}`

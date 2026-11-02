@@ -1,7 +1,7 @@
 import type { Profile, Project } from '@shared/schemas';
 import { GLYPH_LABEL, glyphFor, needsYou } from '@shared/status';
 import type { SessionInfo } from '@shared/terminal-protocol';
-import { UNFINISHED_TOOLTIP, workspaceGlyph } from '@shared/unfinished';
+import { unfinishedTooltip, workspaceGlyph } from '@shared/unfinished';
 import type { Workspace } from '@shared/workspaces';
 import { useMutation } from '@tanstack/react-query';
 import { type ReactNode, useEffect } from 'react';
@@ -167,7 +167,8 @@ export function HomeView({
                         </span>
                       ) : (
                         <span className="block truncate text-sm text-st-input">
-                          {UNFINISHED_TOOLTIP} · {projects.find((p) => p.id === w.projectId)?.name}
+                          {unfinishedTooltip(w.unfinished)} ·{' '}
+                          {projects.find((p) => p.id === w.projectId)?.name}
                         </span>
                       )}
                     </span>

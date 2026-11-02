@@ -110,6 +110,21 @@ describe('marking (spec §9.7)', () => {
     });
   });
 
+  it('marks Done with background commands running, with how many were stopped', () => {
+    seed({ a: 'done', b: 'done' });
+    records.setState('a', 'done', { background: 2 });
+    service().atQuit(['a', 'b']);
+    expect(records.get('a')?.unfinished).toMatchObject({ kind: 'commands', stopped: 2 });
+    expect(records.get('b')?.unfinished).toBeNull();
+  });
+
+  it('after a crash, counts Done with background commands the same', () => {
+    seed({ a: 'done' });
+    records.setState('a', 'done', { background: 1 });
+    records.markUnfinishedAfterCrash();
+    expect(records.get('a')?.unfinished).toMatchObject({ kind: 'commands', stopped: 1 });
+  });
+
   it('after a crash, counts the stored states the same', () => {
     seed({ a: 'working', b: 'done', c: 'interrupted', d: 'exited' });
     records.markUnfinishedAfterCrash();
@@ -204,6 +219,22 @@ describe('at start (spec §9.7)', () => {
     // Once only.
     await vi.advanceTimersByTimeAsync(10_000);
     expect(sent).toHaveLength(2);
+  });
+
+  it('never continues stopped commands at start, even with the setting on', async () => {
+    seed({ a: 'done', b: 'working' });
+    records.setState('a', 'done', { background: 1 });
+    running = new Set(['a', 'b']);
+    settings = { work: { continueAtStart: true } };
+    const svc = service();
+    svc.atQuit(['a', 'b']);
+    await svc.atLaunch(Promise.resolve());
+    expect(sent.map((s) => s.id)).toEqual(['b']);
+    expect(svc.state().overview).toEqual(['a']);
+    // Chosen in the overview, it gets the continue prompt.
+    svc.continue(['a']);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent.map((s) => s.id)).toEqual(['b', 'a']);
   });
 
   it('sends nothing at start with the setting off; asks instead', async () => {

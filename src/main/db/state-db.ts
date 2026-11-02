@@ -76,6 +76,8 @@ const MIGRATIONS: string[] = [
    ALTER TABLE workspaces ADD COLUMN unfinished_at TEXT;
    ALTER TABLE workspaces ADD COLUMN unfinished_new INTEGER NOT NULL DEFAULT 0;
    ALTER TABLE workspaces ADD COLUMN last_prompt TEXT;`,
+  // How many of Claude's background commands the stop ended (spec §9.7).
+  `ALTER TABLE workspaces ADD COLUMN unfinished_stopped INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export type StateDb = Database.Database;

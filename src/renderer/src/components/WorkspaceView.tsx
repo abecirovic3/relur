@@ -5,8 +5,9 @@ import type { SessionInfo } from '@shared/terminal-protocol';
 import {
   canContinue,
   planLimitReached,
+  stoppedNote,
   UNFINISHED_TOOLTIP,
-  type UnfinishedKind,
+  type Unfinished,
 } from '@shared/unfinished';
 import { documentLabel, effectiveWorkflow } from '@shared/workflow';
 import {
@@ -638,7 +639,7 @@ export function WorkspaceView({
         <UnfinishedBar
           workspaceId={workspace.id}
           profileId={workspace.profileId}
-          kind={workspace.unfinished.kind}
+          unfinished={workspace.unfinished}
         />
       ) : null}
       {failed ? (
@@ -796,15 +797,19 @@ export function WorkspaceView({
   );
 }
 
-/**
- * Skills changed, with Restart Claude (spec §13.3): the workspace's Claude started
- * with other skills than it would get now. Restarting resumes the conversation.
- */
-const UNFINISHED_BAR_TEXT: Record<UnfinishedKind, string> = {
-  working: 'it was working.',
-  interrupted: 'you had interrupted it with Esc.',
-  permission: 'it was asking for permission. Give it again in the Claude tab.',
-};
+/** The bar's text after "Claude didn't finish when … closed:" (spec §9.7). */
+function unfinishedBarText({ kind, stopped }: Unfinished): string {
+  switch (kind) {
+    case 'working':
+      return 'it was working.';
+    case 'interrupted':
+      return 'you had interrupted it with Esc.';
+    case 'permission':
+      return 'it was asking for permission. Give it again in the Claude tab.';
+    case 'commands':
+      return `${stoppedNote(stopped)}.`;
+  }
+}
 
 /**
  * The Unfinished marker's bar (spec §9.7): Continue sends the profile's
@@ -814,12 +819,13 @@ const UNFINISHED_BAR_TEXT: Record<UnfinishedKind, string> = {
 function UnfinishedBar({
   workspaceId,
   profileId,
-  kind,
+  unfinished,
 }: {
   workspaceId: string;
   profileId: string;
-  kind: UnfinishedKind;
+  unfinished: Unfinished;
 }) {
+  const { kind } = unfinished;
   const trpc = useTRPC();
   const usage = useQuery(trpc.usage.all.queryOptions());
   const limit = planLimitReached(usage.data?.[profileId]);
@@ -831,7 +837,7 @@ function UnfinishedBar({
       className="flex items-center gap-2 border-b border-line bg-surface px-4 py-2 text-md"
     >
       <span className="min-w-0 flex-1 truncate text-fg-muted">
-        {UNFINISHED_TOOLTIP}: {UNFINISHED_BAR_TEXT[kind]}
+        {UNFINISHED_TOOLTIP}: {unfinishedBarText(unfinished)}
       </span>
       {canContinue(kind) ? (
         <button
@@ -855,6 +861,10 @@ function UnfinishedBar({
   );
 }
 
+/**
+ * Skills changed, with Restart Claude (spec §13.3): the workspace's Claude started
+ * with other skills than it would get now. Restarting resumes the conversation.
+ */
 function SkillsChanged({ workspaceId }: { workspaceId: string }) {
   const trpc = useTRPC();
   useSkillsChanges();
