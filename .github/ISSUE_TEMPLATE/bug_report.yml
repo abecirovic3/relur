@@ -12,7 +12,7 @@ body:
     attributes:
       label: App version
       description: The app menu's About (on Linux, Help › About).
-      placeholder: "0.1.0"
+      placeholder: "0.2.0"
     validations:
       required: true
   - type: dropdown
