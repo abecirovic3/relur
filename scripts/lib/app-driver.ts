@@ -409,6 +409,21 @@ export async function screenshot(page: Cdp, dir: string | undefined, name: strin
   fs.writeFileSync(path.join(dir, name), Buffer.from(data, 'base64'));
 }
 
+/**
+ * Reloads the page and waits for the new one's UI. The old page stays (and
+ * stays ready) for a while after Page.reload, slower in dev mode; a mark set
+ * on it tells the two apart.
+ */
+export async function reloadPage(page: Cdp): Promise<void> {
+  await page.eval('window.__beforeReload = true');
+  await page.send('Page.reload');
+  await page.waitFor(
+    `!window.__beforeReload && !!document.querySelector('[data-app-ready]')`,
+    'the UI after reload',
+    30_000,
+  );
+}
+
 export async function waitForFile(file: string, timeoutMs = 10_000): Promise<string> {
   for (const end = Date.now() + timeoutMs; Date.now() < end; ) {
     if (fs.existsSync(file)) {

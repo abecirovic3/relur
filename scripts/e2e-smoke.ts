@@ -40,6 +40,7 @@ import {
   pressKey,
   pressShortcut,
   type RunningApp,
+  reloadPage,
   screenshot,
   sleep,
   submitDialog,
@@ -511,13 +512,7 @@ exec sleep 600
     await page.waitFor(`${tabCount} === 2`, 'a second project shell');
 
     // Reloading the window re-attaches to the running shells.
-    await page.send('Page.reload');
-    await sleep(500);
-    await page.waitFor(
-      `!!document.querySelector('[data-app-ready]')`,
-      'the UI after reload',
-      30_000,
-    );
+    await reloadPage(page);
     await clickProject(page, 'api-service');
     await page.waitFor(`${tabCount} === 2`, 'both project shells after reload');
     await page.eval(
