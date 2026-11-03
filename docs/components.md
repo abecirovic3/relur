@@ -270,6 +270,7 @@ Spec §13.7. Edit profile › **Task lookup** (`ProfileLookupEditor` in `TaskLoo
 The terminal text is never restyled; everything below is an xterm decoration or an overlay.
 
 - **Gutter:** 36px left margin. At each user prompt, the prompt number in `text-profile font-mono font-bold text-xs`. A triangle in `st-permission` marks a line that asks for permission.
+- **Own terminal only:** decorations live in their terminal's xterm and go with it. A terminal is redrawn in full when shown, resized, re-themed or after a lost WebGL context (spec §6.3), so nothing from the terminal shown before can remain.
 - **Response rule:** a 1px `line-strong` gutter line spanning the hovered response.
 - **Copy at each response (classic mode):** a `h-5 bg-raised border-line-strong rounded-md` **Copy** button at the right edge of the line where a response ends, scrolling with the text. The label changes to "Copied" for 1.5s. ⌥C copies the last response.
 - **Responses panel** (`ResponsesPanel.tsx`): the Claude tab bar's ghost sm **Responses ⇧⌘R** toggle (`aria-pressed`; tooltip also names ⌥C) opens a right-hand `aside` (`bg-canvas border-l-line`) beside the terminal, next to the Changes panel when both are open.

@@ -117,13 +117,34 @@ export function TerminalView({
     term.attachCustomWheelEventHandler(
       mouseWheelHandler(term, () => container.querySelector('.xterm-screen')?.clientHeight ?? 0),
     );
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        webgl.dispose();
-        container.dataset.renderer = 'dom';
+    let disposed = false;
+    let webgl: WebglAddon | null = null;
+    // A full redraw (spec §6.3): when the terminal is shown, after a resize,
+    // after a theme change and after a lost WebGL context, every row is drawn
+    // again from the buffer and the glyph atlas rebuilt, so nothing drawn
+    // before (by this terminal or another) can remain. A precaution: stale
+    // content was reported but not reproduced. One per frame at most.
+    let repaintFrame = 0;
+    const repaint = () => {
+      cancelAnimationFrame(repaintFrame);
+      repaintFrame = requestAnimationFrame(() => {
+        if (disposed) return;
+        webgl?.clearTextureAtlas();
+        term.refresh(0, term.rows - 1);
+        // Scripted checks count them.
+        container.dataset.repaints = String(Number(container.dataset.repaints ?? 0) + 1);
       });
-      term.loadAddon(webgl);
+    };
+    try {
+      const addon = new WebglAddon();
+      addon.onContextLoss(() => {
+        addon.dispose();
+        webgl = null;
+        container.dataset.renderer = 'dom';
+        repaint();
+      });
+      term.loadAddon(addon);
+      webgl = addon;
       container.dataset.renderer = 'webgl';
     } catch {
       // No WebGL (common in VMs): xterm keeps its DOM renderer.
@@ -153,6 +174,7 @@ export function TerminalView({
     // Follow theme changes (<html data-theme>, set from nativeTheme).
     const themeObserver = new MutationObserver(() => {
       term.options.theme = xtermTheme();
+      repaint();
     });
     themeObserver.observe(document.documentElement, { attributeFilter: ['data-theme'] });
 
@@ -197,7 +219,6 @@ export function TerminalView({
     });
 
     let port: MessagePort | null = null;
-    let disposed = false;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     const sendSize = () => {
       clearTimeout(resizeTimer);
@@ -205,8 +226,12 @@ export function TerminalView({
         void trpcClient.sessions.resize.mutate({ sessionId, cols: term.cols, rows: term.rows });
       }, 50);
     };
+    // Also when it is shown again after being hidden (its size goes from 0).
     const fitToContainer = () => {
-      if (container.offsetWidth > 0 && container.offsetHeight > 0) fit.fit();
+      if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+        fit.fit();
+        repaint();
+      }
     };
     const observer = new ResizeObserver(fitToContainer);
     observer.observe(container);
@@ -239,6 +264,8 @@ export function TerminalView({
             }
             term.write(message.data.slice(from));
           } else term.write(message.data);
+          // Shown with its own output: once the replay is drawn, everything again.
+          if (message.type === 'replay') term.write('', repaint);
         };
         port.start();
         for (const data of queued.splice(0)) send(data);
@@ -252,6 +279,7 @@ export function TerminalView({
 
     return () => {
       disposed = true;
+      cancelAnimationFrame(repaintFrame);
       clearTimeout(resizeTimer);
       observer.disconnect();
       themeObserver.disconnect();
