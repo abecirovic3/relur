@@ -93,9 +93,11 @@ describe('parseClaudeLookup', () => {
       message: "Claude needed Bash, which it isn't allowed to use",
       refused: ['Bash'],
     });
+    // No title and no tool it missed: not found, so New workspace goes on (spec §13.7).
     expect(parseClaudeLookup(json(answer(null, 'the shell')), 'A-1')).toMatchObject({
       message: 'Claude found no title',
       refused: [],
+      notFound: true,
     });
     expect(
       parseClaudeLookup(
@@ -126,6 +128,7 @@ describe('parseClaudeLookup', () => {
       message: 'Claude found no title',
       refused: [],
       detail: 'No tracker tool is available.',
+      notFound: true,
     });
     // Without a reason: the result text, unless it's only the answer again.
     expect(

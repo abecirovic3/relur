@@ -2,6 +2,16 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import type { Env } from '../env/scrub';
 
+/** The first line of git's error, without `fatal:` or `error:` (for notes). */
+export function gitReason(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  const line = text
+    .split('\n')
+    .map((l) => l.trim())
+    .find(Boolean);
+  return (line ?? text).replace(/^(fatal|error):\s*/i, '');
+}
+
 export class GitError extends Error {
   constructor(
     readonly args: string[],
@@ -168,16 +178,15 @@ export class Git {
     return (await this.tryRun(repo, ['rev-parse', '--verify', '--quiet', ref])) !== null;
   }
 
-  /** Asks the remote itself whether it has the branch (network). */
-  async remoteBranchExists(repo: string, remote: string, branch: string): Promise<boolean> {
-    try {
-      await this.run(repo, ['ls-remote', '--exit-code', '--heads', remote, `refs/heads/${branch}`]);
-      return true;
-    } catch (error) {
-      // Exit code 2: the remote answered and has no such branch.
-      if (error instanceof GitError && error.exitCode === 2) return false;
-      throw error;
-    }
+  /** The remote's branches, asked of the remote itself (network). */
+  async remoteHeads(repo: string, remote: string): Promise<Set<string>> {
+    const out = await this.run(repo, ['ls-remote', '--heads', remote]);
+    return new Set(
+      out
+        .split('\n')
+        .map((line) => /\trefs\/heads\/(.+)$/.exec(line)?.[1])
+        .filter((b): b is string => Boolean(b)),
+    );
   }
 
   /** Branch names of a remote's tracking refs, e.g. `develop` for `origin/develop`. */

@@ -267,10 +267,10 @@ export function ChooseEditorDialog({
   );
 }
 
-/** Shows a message in the window's notice bar (App listens). */
+/** Shows a message in the window's notice bar (App listens); `info` for news that isn't a problem. */
 export const APP_NOTICE_EVENT = 'app-notice';
-export const showAppNotice = (text: string) =>
-  window.dispatchEvent(new CustomEvent(APP_NOTICE_EVENT, { detail: text }));
+export const showAppNotice = (text: string, info = false) =>
+  window.dispatchEvent(new CustomEvent(APP_NOTICE_EVENT, { detail: { text, info } }));
 
 /**
  * Open in editor from anywhere (spec §6.13): runs `open`; without an editor

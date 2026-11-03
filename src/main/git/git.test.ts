@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixture, type Fixture } from '../test-support/git-fixtures';
-import { Git, GitError } from './git';
+import { Git, GitError, gitReason } from './git';
 
 let fx: Fixture;
 let git: Git;
@@ -66,8 +66,13 @@ describe('Git', () => {
     expect(await git.isValidBranchName(clone, '-x')).toBe(false);
     expect(await git.localBranchExists(clone, 'develop')).toBe(true);
     expect(await git.localBranchExists(clone, 'nope')).toBe(false);
-    expect(await git.remoteBranchExists(clone, 'origin', 'develop')).toBe(true);
-    expect(await git.remoteBranchExists(clone, 'origin', 'nope')).toBe(false);
+    expect([...(await git.remoteHeads(clone, 'origin'))]).toEqual(['develop']);
+    // A remote without branches, such as a new, empty repository.
+    fx.git(fx.root, 'init', '-q', '--bare', 'empty.git');
+    fx.git(clone, 'remote', 'add', 'empty', path.join(fx.root, 'empty.git'));
+    expect(await git.remoteHeads(clone, 'empty')).toEqual(new Set());
+    const unreachable = await git.remoteHeads(clone, 'nowhere').catch((e) => e);
+    expect(gitReason(unreachable)).toMatch(/^'nowhere' does not appear to be a git repository/);
     expect(await git.trackingBranchExists(clone, 'origin', 'develop')).toBe(true);
     expect(await git.remoteBranches(clone, 'origin')).toEqual(['develop']);
   });

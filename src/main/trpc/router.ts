@@ -761,8 +761,11 @@ export function createAppRouter({
       linkedFromCli: publicProcedure.subscription(({ signal }) =>
         fromListener<CliLinkEvent>((listener) => cliLink.onLinked(listener), signal),
       ),
-      /** Why a branch name can't be used, or null (local checks; Create also asks the remote). */
-      branchProblem: publicProcedure
+      /**
+       * Why a branch name can't be used, or null, and a name to use instead
+       * (local checks; Create also asks the remote).
+       */
+      branchCheck: publicProcedure
         .input(
           projectId.extend({
             branch: z.string(),
@@ -770,7 +773,7 @@ export function createAppRouter({
           }),
         )
         .query(({ input }) =>
-          workspaces.branchProblem(input.projectId, input.branch, input.linkedProjectIds),
+          workspaces.branchCheck(input.projectId, input.branch, input.linkedProjectIds),
         ),
       baseBranches: publicProcedure
         .input(projectId)
@@ -785,6 +788,8 @@ export function createAppRouter({
             runSetup: z.boolean().optional(),
             /** Other projects of the profile it also spans (spec §21.2). */
             linkedProjectIds: z.array(IdSchema).max(50).optional(),
+            /** The branch came from the task: a taken one gets the next free name (spec §7.1). */
+            uniqueBranch: z.boolean().optional(),
           }),
         )
         .mutation(({ input }) => workspaces.create(input)),

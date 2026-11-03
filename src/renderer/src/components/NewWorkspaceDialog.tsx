@@ -41,9 +41,11 @@ function rememberAlsoIn(projectId: string, ids: string[]): void {
  * the id, the rest the title), a branch derived from the profile's branch
  * template until edited, and the base branch inherited from the project.
  * "Run setup, then start Claude" shows when the project has setup commands
- * (spec §8.3). **Also in** links the profile's other projects (§21.2). A key
- * alone is looked up first when the workflow has a task lookup (§13.7): the
- * title fills in and the workspace is created, or the dialog says why not.
+ * (spec §8.3). **Also in** links the profile's other projects (§21.2). Any
+ * text gives a branch; a taken one from the task becomes the next free name.
+ * A key alone is looked up first when the profile has a task lookup (§13.7):
+ * the title fills in and the workspace is created; a key the lookup doesn't
+ * know is created without a title; a failed lookup offers Create anyway.
  */
 export function NewWorkspaceDialog({
   profile,
@@ -78,20 +80,27 @@ export function NewWorkspaceDialog({
     id: taskId ?? '',
     title,
   });
-  const branch = branchEdit ?? derived;
+  // The branch asked for: typed, else from the task.
+  const wanted = branchEdit ?? derived;
   const base = baseEdit ?? project?.baseBranch ?? profile.defaults.baseBranch;
 
-  const checkedBranch = useDebounced(branch.trim(), 250);
-  const problem = useQuery(
-    trpc.workspaces.branchProblem.queryOptions(
+  const checkedBranch = useDebounced(wanted.trim(), 250);
+  const check = useQuery(
+    trpc.workspaces.branchCheck.queryOptions(
       { projectId, branch: checkedBranch, linkedProjectIds },
       { enabled: Boolean(project && checkedBranch) },
     ),
   );
+  const checked = checkedBranch === wanted.trim() && wanted.trim() ? (check.data ?? null) : null;
+  // A taken branch from the task becomes the next free name (spec §7.1); a
+  // typed one is the user's to change, with the free name offered.
+  const renamed =
+    branchEdit === null && checked?.problem && checked.suggestion ? checked.suggestion : null;
+  const branch = branchEdit ?? renamed ?? derived;
   const bases = useQuery(
     trpc.workspaces.baseBranches.queryOptions({ projectId }, { enabled: Boolean(project) }),
   );
-  const create = useMutation(trpc.workspaces.create.mutationOptions({ onSuccess: onCreated }));
+  const create = useMutation(trpc.workspaces.create.mutationOptions());
   const lookup = project ? (profile.taskLookup ?? null) : null;
   const lookupTitle = useMutation(trpc.workflow.lookupTitle.mutationOptions());
   const cancelLookup = useMutation(trpc.workflow.cancelLookup.mutationOptions());
@@ -119,8 +128,7 @@ export function NewWorkspaceDialog({
   const hasSetup = (setup.data?.setup.length ?? 0) > 0;
   const [runSetup, setRunSetup] = useState(true);
 
-  const branchError =
-    checkedBranch === branch.trim() && problem.data && branch.trim() ? problem.data : null;
+  const branchError = !renamed && checked?.problem ? checked.problem : null;
   const canCreate =
     project !== null &&
     (title !== '' || taskId !== null) &&
@@ -130,16 +138,30 @@ export function NewWorkspaceDialog({
     !create.isPending &&
     !lookingUp;
 
-  const createWith = (project: Project, taskTitle: string, taskBranch: string) => {
-    create.mutate({
-      projectId: project.id,
-      taskId,
-      title: taskTitle,
-      branch: taskBranch.trim(),
-      baseBranch: base.trim(),
-      runSetup: hasSetup ? runSetup : undefined,
-      linkedProjectIds,
-    });
+  /** Creates the workspace; `note` joins the notice the window shows after (spec §7.1). */
+  const createWith = (
+    project: Project,
+    taskTitle: string,
+    taskBranch: string,
+    note: string | null = null,
+  ) => {
+    create.mutate(
+      {
+        projectId: project.id,
+        taskId,
+        title: taskTitle,
+        branch: taskBranch.trim(),
+        baseBranch: base.trim(),
+        runSetup: hasSetup ? runSetup : undefined,
+        linkedProjectIds,
+        // A branch from the task, not typed: a taken one gets the next free name.
+        uniqueBranch: branchEdit === null,
+      },
+      {
+        onSuccess: (created) =>
+          onCreated({ ...created, notes: [...(note ? [note] : []), ...created.notes] }),
+      },
+    );
     rememberAlsoIn(project.id, linkedProjectIds);
   };
 
@@ -148,6 +170,11 @@ export function NewWorkspaceDialog({
     if (!canCreate || !project) return;
     if (!taskId || title || !lookup) {
       createWith(project, title, branch);
+      return;
+    }
+    // Create anyway after a failed lookup: no title, the branch from what was typed.
+    if (lookupError?.id === taskId) {
+      createWith(project, '', branch);
       return;
     }
     // A key alone: look its title up, then create (spec §13.7).
@@ -170,6 +197,16 @@ export function NewWorkspaceDialog({
               result.title,
               branchEdit ??
                 branchFromTemplate(profile.defaults.branchTemplate, { id, title: result.title }),
+            );
+            return;
+          }
+          // An id the lookup doesn't know: created anyway, without a title.
+          if (result && !result.ok && result.notFound) {
+            createWith(
+              project,
+              '',
+              branch,
+              `${id} wasn't found; the branch is named after what you typed`,
             );
             return;
           }
@@ -338,9 +375,24 @@ export function NewWorkspaceDialog({
               </span>
             ) : null}
           </div>
+          {renamed ? (
+            <p data-branch-renamed className="mt-1 text-sm text-fg-muted">
+              {checked?.problem}; using <span className="font-mono text-fg">{renamed}</span>
+            </p>
+          ) : null}
           {branchError ? (
-            <p role="alert" className="mt-1 text-sm text-st-error">
-              ✕ {branchError}
+            <p role="alert" className="mt-1 flex items-center gap-2 text-sm text-st-error">
+              <span>✕ {branchError}</span>
+              {checked?.suggestion ? (
+                <button
+                  type="button"
+                  data-use-branch
+                  className={button('ghost', 'sm')}
+                  onClick={() => setBranch(checked.suggestion)}
+                >
+                  Use <span className="font-mono">{checked.suggestion}</span>
+                </button>
+              ) : null}
             </p>
           ) : null}
         </div>
@@ -406,14 +458,16 @@ export function NewWorkspaceDialog({
         {lookupError ? (
           <div data-lookup-error role="alert" className="space-y-0.5 text-sm select-text">
             <p className="text-st-error">
-              ✕ Couldn't look up {lookupError.id}: {lookupError.message}. Type its title after the
-              id.
+              ✕ Couldn't look up {lookupError.id}: {lookupError.message}.
             </p>
             {lookupError.detail ? (
               <p data-lookup-detail className="text-fg-muted">
                 Claude: {lookupError.detail}
               </p>
             ) : null}
+            <p className="text-fg-muted">
+              Create anyway names the branch after what you typed, or type the title after the id.
+            </p>
           </div>
         ) : null}
         {create.isPending ? (
@@ -433,7 +487,8 @@ export function NewWorkspaceDialog({
             Cancel <Kbd>Esc</Kbd>
           </button>
           <button type="submit" className={button('primary', 'lg')} disabled={!canCreate}>
-            Create workspace <Kbd onFg>{keyHint('confirm')}</Kbd>
+            {lookupError ? 'Create anyway' : 'Create workspace'}{' '}
+            <Kbd onFg>{keyHint('confirm')}</Kbd>
           </button>
         </ModalFooter>
       </form>

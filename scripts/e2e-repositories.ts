@@ -253,6 +253,40 @@ exec sleep 600
     await chooseRemote('origin');
     assert.equal(project('fresh-app')?.remote, 'origin');
 
+    // origin is still empty (spec §7.3): the workspace starts from the local
+    // trunk, with a note; once trunk is pushed, the next starts from origin's.
+    const newWorkspace = async (task: string) => {
+      fs.rmSync(path.join(fx.root, 'claude-started.txt'), { force: true });
+      await clickLabel(page, 'New workspace in fresh-app');
+      await page.waitFor(`!!document.querySelector('dialog[open] #ws-task')`, 'New workspace');
+      await typeInField(page, '#ws-task', task, false);
+      await sleep(600);
+      await submitDialog(page);
+      await page.waitFor(`!document.querySelector('dialog[open]')`, 'the workspace');
+      return (await waitForFile(path.join(fx.root, 'claude-started.txt'))).trim();
+    };
+    const head = (dir: string) => fx.git(dir, 'rev-parse', 'HEAD').trim();
+    const notice = `(document.querySelector('[data-app-notice]')?.textContent ?? '')`;
+    const localStart = await newWorkspace('NEW-2 Before the push');
+    assert.equal(head(localStart), head(fresh), 'from the local trunk');
+    await page.waitFor(
+      `${notice}.includes("trunk isn't on origin yet; the workspace starts from your local trunk")`,
+      'the note',
+    );
+    await screenshot(page, screenshotDir, 'repo-1b-empty-remote.png');
+    fx.git(fresh, 'push', '-q', 'origin', 'trunk');
+    const elsewhere = path.join(fx.root, 'fresh-elsewhere');
+    fx.git(fx.root, 'clone', '-q', '-b', 'trunk', freshOrigin, elsewhere);
+    fx.git(elsewhere, 'commit', '-q', '--allow-empty', '-m', 'Pushed from elsewhere');
+    fx.git(elsewhere, 'push', '-q', 'origin', 'trunk');
+    await page.eval(
+      `document.querySelector('[data-app-notice] button[aria-label=Dismiss]')?.click()`,
+    );
+    const remoteStart = await newWorkspace('NEW-3 After the push');
+    assert.equal(head(remoteStart), head(elsewhere), "from origin's trunk");
+    await sleep(500);
+    assert.equal(await page.eval<string>(notice), '', 'no note');
+
     // Clone from URL: the remembered parent, the name from the URL (editable),
     // git in a terminal in the dialog, then added with the remote's default branch.
     const { origin: libOrigin } = fx.cloneWithRemote('lib', 'develop');

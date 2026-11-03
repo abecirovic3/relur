@@ -131,7 +131,7 @@ export function App() {
   // Messages from deeper down, such as an editor that didn't open (spec §6.13).
   useEffect(() => {
     const listener = (event: Event) =>
-      setAppNotice({ text: (event as CustomEvent<string>).detail });
+      setAppNotice((event as CustomEvent<{ text: string; info: boolean }>).detail);
     window.addEventListener(APP_NOTICE_EVENT, listener);
     return () => window.removeEventListener(APP_NOTICE_EVENT, listener);
   }, []);
@@ -1006,13 +1006,22 @@ export function App() {
               projects={profileProjects}
               initialProject={newWorkspace.project}
               onClose={() => setNewWorkspace(null)}
-              onCreated={({ workspace: created, claude, claudeError, setup }) => {
+              onCreated={({ workspace: created, claude, claudeError, setup, notes }) => {
                 setNewWorkspace(null);
+                // A renamed branch, a local base, a task not found (spec §7.1, §7.3).
+                if (notes.length > 0) setAppNotice({ text: notes.join('\n'), info: true });
                 if (claudeError) setClaudeNotices((n) => ({ ...n, [created.id]: claudeError }));
-                // Setup first: its tab shows until Claude starts (spec §8.3).
-                if (setup) showSession(setup);
-                else if (claude) showSession(claude);
-                else openWorkspace(created);
+                // Setup first: its tab shows until Claude starts (spec §8.3). The
+                // view comes from the new workspace, which the list may not have yet,
+                // so a linked repository's Setup tab doesn't open that repository's project.
+                const session = setup ?? claude;
+                if (session) {
+                  showView(
+                    created.profileId,
+                    { kind: 'workspace', projectId: created.projectId, workspaceId: created.id },
+                    session.id,
+                  );
+                } else openWorkspace(created);
               }}
             />
           ) : null}

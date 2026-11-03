@@ -61,9 +61,7 @@ describe('TaskLookupService', () => {
       await run('FAKE-9', { kind: 'command', command: 'tracker {id}', timeoutSec: 10 }),
     ).toEqual({ ok: false, message: 'The lookup failed (exit 2): no such task', refused: [] });
     expect(await run('FAKE-1', { kind: 'command', command: 'true', timeoutSec: 10 })).toMatchObject(
-      {
-        message: 'The lookup printed nothing',
-      },
+      { message: 'The lookup printed nothing', notFound: true },
     );
   });
 

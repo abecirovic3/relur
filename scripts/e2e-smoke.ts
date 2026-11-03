@@ -2555,11 +2555,12 @@ exec sleep 600
     await page.eval(`document.querySelector('dialog[open] [data-edit-tab=lookup]').click()`);
     await page.waitFor(`!!document.querySelector('[data-lookup-editor]')`, 'the Task lookup tab');
     // A task lookup (spec §13.7): a scratch command that knows FAKE-1 (after a
-    // second, so "Looking up" shows) and fails for anything else.
+    // second, so "Looking up" shows), finds nothing for FAKE-404 and fails for
+    // anything else.
     const lookupScript = path.join(fx.root, 'bin', 'fake-lookup');
     fs.writeFileSync(
       lookupScript,
-      `#!/bin/sh\ncase "$1" in\n  FAKE-1) sleep 1; echo "Fix the fake login" ;;\n  *) echo "no task $1" >&2; exit 3 ;;\nesac\n`,
+      `#!/bin/sh\ncase "$1" in\n  FAKE-1) sleep 1; echo "Fix the fake login" ;;\n  FAKE-404) ;;\n  *) echo "no task $1" >&2; exit 3 ;;\nesac\n`,
       { mode: 0o755 },
     );
     // Ask Claude: the profile's own model unless one is named, ToolSearch with
@@ -3111,10 +3112,14 @@ exec sleep 600
     assert.equal(fs.existsSync(apiTree), false);
     assert.equal(fs.existsSync(webTree), false);
 
-    // A task id alone is looked up (spec §13.7). A failure keeps the dialog
-    // open and creates nothing; a found title creates the workspace with the
-    // branch from it and the profile's Start prompt; no id, no Start prompt.
+    // A task id alone is looked up (spec §13.7). A failed lookup shows why and
+    // creates nothing until Create anyway (↵), which names the branch after
+    // what was typed; a found title creates the workspace with the branch from
+    // it and the profile's Start prompt; no id, no Start prompt; an id the
+    // lookup doesn't know is created right away, with a note.
     const runs = () => fs.readdirSync(fx.root).filter((f) => f.startsWith('claude-run-')).length;
+    const submitLabel = `document.querySelector('dialog[open] button[type=submit]')?.textContent`;
+    const appNotice = `(document.querySelector('[data-app-notice]')?.textContent ?? '')`;
     await clickLabel(page, 'New workspace in shop');
     await page.waitFor(`!!document.querySelector('dialog[open] #ws-task')`, 'the dialog');
     await typeInField(page, '#ws-task', 'FAKE-2', false);
@@ -3124,7 +3129,23 @@ exec sleep 600
       `document.querySelector('dialog[open] [data-lookup-error]')?.textContent.includes("Couldn't look up FAKE-2: The lookup failed (exit 3): no task FAKE-2")`,
       'the lookup failure',
     );
-    assert.equal(fx.git(shop, 'branch', '--list', 'FAKE-2*').trim(), '', 'nothing created');
+    assert.match(await page.eval<string>(submitLabel), /^Create anyway/);
+    assert.equal(fx.git(shop, 'branch', '--list', 'FAKE-2*').trim(), '', 'nothing created yet');
+    await screenshot(page, screenshotDir, '14g-lookup-failed.png');
+    const runsBeforeAnyway = runs();
+    await submitDialog(page);
+    await page.waitFor(
+      `!document.querySelector('dialog[open]') && document.querySelector('h1')?.textContent === 'FAKE-2'`,
+      'the workspace created anyway',
+      30_000,
+    );
+    assert.equal(
+      fx.git(shop, 'branch', '--list', '--format=%(refname:short)', 'FAKE-2').trim(),
+      'FAKE-2',
+    );
+    await claudeRun(runsBeforeAnyway);
+    await clickLabel(page, 'New workspace in shop');
+    await page.waitFor(`!!document.querySelector('dialog[open] #ws-task')`, 'the dialog');
     await typeInField(page, '#ws-task', 'FAKE-1', false);
     await sleep(600);
     const runsBefore = runs();
@@ -3157,6 +3178,27 @@ exec sleep 600
       /^Plan /m,
       'no Start prompt without an id',
     );
+    await clickLabel(page, 'New workspace in shop');
+    await page.waitFor(`!!document.querySelector('dialog[open] #ws-task')`, 'the dialog');
+    await typeInField(page, '#ws-task', 'FAKE-404', false);
+    await sleep(600);
+    await submitDialog(page);
+    await page.waitFor(
+      `!document.querySelector('dialog[open]') && document.querySelector('h1')?.textContent === 'FAKE-404'`,
+      'the workspace for an id the lookup does not know',
+      30_000,
+    );
+    assert.ok(
+      (await page.eval<string>(appNotice)).includes(
+        "FAKE-404 wasn't found; the branch is named after what you typed",
+      ),
+      'the note',
+    );
+    assert.equal(
+      fx.git(shop, 'branch', '--list', '--format=%(refname:short)', 'FAKE-404').trim(),
+      'FAKE-404',
+    );
+    await claudeRun(runsBefore + 2);
 
     // Many linked repositories (spec §21.4): the primary chip in full, the
     // linked ones by name on one line, the rest under "+n more"; a tooltip

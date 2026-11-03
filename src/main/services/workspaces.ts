@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { numberedBranch, validBranchName } from '@shared/branch';
 import { BRAND } from '@shared/brand';
 import { projectWorktreeDir, WORKTREES_DIR } from '@shared/projects';
 import { DEFAULT_PORT_RANGE, type Profile, type Project } from '@shared/schemas';
@@ -21,10 +22,11 @@ import {
   type WorkspaceTask,
   workspaceRepo,
 } from '@shared/workspaces';
+import { baseRef } from '../changes/service';
 import type { ConfigStore } from '../config/store';
 import type { WorkspaceRecords } from '../db/workspaces';
 import type { EnvService } from '../env/service';
-import type { Git } from '../git/git';
+import { type Git, gitReason } from '../git/git';
 import { expandHome } from '../paths';
 import { copyIncludedFiles } from '../worktrees/include';
 import {
@@ -46,7 +48,15 @@ export interface CreateWorkspaceInput {
   runSetup?: boolean;
   /** Other projects of the profile the workspace also spans (spec §21.2). */
   linkedProjectIds?: string[];
+  /**
+   * The branch came from the task, not typed: when it is taken, here or on a
+   * remote, the next free name (`-2`, `-3` …) is used instead (spec §7.1).
+   */
+  uniqueBranch?: boolean;
 }
+
+/** A repository's remote branches, why the remote couldn't be asked, or null without one. */
+type RemoteHeads = { heads: Set<string> } | { error: string } | null;
 
 /** How deleting treats one repository's worktree and branch (spec §14.2). */
 export interface RepoDeleteChoice {
@@ -61,6 +71,8 @@ export interface LinkResult {
   setup: SessionInfo | null;
   /** The restarted Claude, when it restarted right away. */
   claude: SessionInfo | null;
+  /** A base that came from the local branch (spec §7.3), for the notice. */
+  notes: string[];
   /** The line to paste into Claude with Link only. */
   addDirLine: string;
 }
@@ -72,6 +84,8 @@ export interface CreateResult {
   claudeError: string | null;
   /** The first Setup tab, when setup runs. */
   setup: SessionInfo | null;
+  /** What went differently, for the notice (spec §7.3): a renamed branch, a local base. */
+  notes: string[];
 }
 
 /**
@@ -201,6 +215,29 @@ export class WorkspaceService {
     return null;
   }
 
+  /**
+   * branchProblem with a name to use instead (spec §7.1): what git refuses
+   * replaced, then the next free name (`-2`, `-3` …). Local checks only.
+   */
+  async branchCheck(
+    projectId: string,
+    branch: string,
+    linkedProjectIds: string[] = [],
+  ): Promise<{ problem: string | null; suggestion: string | null }> {
+    const problem = await this.branchProblem(projectId, branch, linkedProjectIds);
+    const valid = validBranchName(branch.trim());
+    if (!problem || !valid) return { problem, suggestion: null };
+    const { project, profile, git } = await this.context(projectId);
+    const projects = [project, ...linkedProjectIds.map((id) => this.linkable(project, id))];
+    const free = await this.freeBranch(
+      git,
+      profile,
+      projects.map((p) => ({ project: p, remote: null })),
+      valid,
+    );
+    return { problem, suggestion: free === branch.trim() ? null : free };
+  }
+
   /** Branches to offer as the base: the remote's, or local ones without a remote. */
   async baseBranches(projectId: string): Promise<string[]> {
     const { project, git } = await this.context(projectId);
@@ -216,21 +253,43 @@ export class WorkspaceService {
    */
   async create(input: CreateWorkspaceInput): Promise<CreateResult> {
     const { project, profile, git } = await this.context(input.projectId);
-    const branch = input.branch.trim();
+    const wanted = input.uniqueBranch ? validBranchName(input.branch.trim()) : input.branch.trim();
     const base = input.baseBranch.trim();
     const title = input.title.trim();
     if (!title && !input.taskId?.trim()) throw new Error('Enter a task');
     if (!base) throw new Error('Enter a base branch');
     const linkedIds = [...new Set(input.linkedProjectIds ?? [])].filter((id) => id !== project.id);
-    const problem = await this.branchProblem(project.id, branch, linkedIds);
-    if (problem) throw new Error(problem);
-    const targets = [
-      { project, base },
-      ...linkedIds.map((id) => {
-        const p = this.linkable(project, id);
-        return { project: p, base: this.projectBase(profile, p) };
-      }),
-    ];
+    if (!input.uniqueBranch) {
+      const problem = await this.branchProblem(project.id, wanted, linkedIds);
+      if (problem) throw new Error(problem);
+    } else if (!wanted) {
+      throw new Error('Enter a branch name');
+    }
+    const projects = [project, ...linkedIds.map((id) => this.linkable(project, id))];
+    // Spec §7.3: each remote is asked once, for the branch and the base.
+    const remoteTargets = await Promise.all(
+      projects.map(async (p) => ({ project: p, remote: await this.askRemote(git, p) })),
+    );
+    const notes: string[] = [];
+    let branch = wanted;
+    if (input.uniqueBranch) {
+      branch = await this.freeBranch(git, profile, remoteTargets, wanted);
+      if (branch !== wanted) notes.push(`${wanted} already exists; the branch is ${branch}`);
+    } else {
+      for (const { project: p, remote } of remoteTargets) {
+        if (remote && 'heads' in remote && remote.heads.has(branch)) {
+          const free = await this.freeBranch(git, profile, remoteTargets, branch);
+          throw new Error(
+            `${p.remote}${projects.length > 1 ? ` of ${p.name}` : ''} already has a branch named ${branch}; ${free} is free`,
+          );
+        }
+      }
+    }
+    const targets = remoteTargets.map((t, i) => ({
+      project: t.project,
+      remote: t.remote,
+      base: i === 0 ? base : this.projectBase(profile, t.project),
+    }));
     const paths = targets.map((t) =>
       path.join(expandHome(projectWorktreeDir(profile, t.project)), branch),
     );
@@ -243,11 +302,21 @@ export class WorkspaceService {
     try {
       for (const [index, target] of targets.entries()) {
         const worktreePath = paths[index] as string;
-        await this.addRepoWorktree(git, target.project, worktreePath, branch, target.base, task, {
-          named: several,
-          onCreated: () =>
-            created.push({ repo: expandHome(target.project.repoPath), worktreePath }),
-        });
+        const note = await this.addRepoWorktree(
+          git,
+          target.project,
+          target.remote,
+          worktreePath,
+          branch,
+          target.base,
+          task,
+          {
+            named: several,
+            onCreated: () =>
+              created.push({ repo: expandHome(target.project.repoPath), worktreePath }),
+          },
+        );
+        if (note) notes.push(note);
       }
     } catch (error) {
       await this.removeCreated(git, created, branch);
@@ -335,6 +404,7 @@ export class WorkspaceService {
         claude: null,
         claudeError: null,
         setup: null,
+        notes,
       };
     }
     const withSetup = plans.filter((p) => p.plan.setup.length > 0);
@@ -347,10 +417,10 @@ export class WorkspaceService {
         restart: false,
       });
       const setup = sessions[0] ?? null;
-      if (afterSetup) return { workspace, claude: null, claudeError: null, setup };
-      return { ...(await this.launchClaude(workspace)), setup };
+      if (afterSetup) return { workspace, claude: null, claudeError: null, setup, notes };
+      return { ...(await this.launchClaude(workspace)), setup, notes };
     }
-    return { ...(await this.launchClaude(workspace)), setup: null };
+    return { ...(await this.launchClaude(workspace)), setup: null, notes };
   }
 
   /**
@@ -448,8 +518,11 @@ export class WorkspaceService {
     if (!offered.titleFromField && title === offered.title) {
       this.records.setTitleFromStatusPending(workspace.id, true);
     }
-    const baseRef = project.remote ? `${project.remote}/${base}` : base;
-    const start = await git.mergeBase(offered.path, 'HEAD', baseRef);
+    const start = await git.mergeBase(
+      offered.path,
+      'HEAD',
+      await baseRef(git, project, { worktreePath: offered.path, baseBranch: base }),
+    );
     if (start) this.records.setStartCommit(workspace.id, start);
     const plan = setupPlan(project, offered.path);
     if (input.runSetup && plan.setup.length > 0 && !plan.error) {
@@ -461,34 +534,94 @@ export class WorkspaceService {
     return this.workspace(workspace.id);
   }
 
+  /** The remote's branches (network), or why it couldn't be asked; null without a remote. */
+  private async askRemote(git: Git, project: Project): Promise<RemoteHeads> {
+    if (!project.remote) return null;
+    try {
+      return { heads: await git.remoteHeads(expandHome(project.repoPath), project.remote) };
+    } catch (error) {
+      return { error: gitReason(error) };
+    }
+  }
+
   /**
-   * One repository's worktree for a workspace (spec §7.3 steps 1–4): checks
-   * the remote, fetches the base, adds the worktree with its branch, copies
-   * the .worktreeinclude files and writes the task file.
+   * `branch`, or the first of `branch-2`, `branch-3` … that is free in every
+   * repository: no local branch, no remote-tracking ref, not on the remote as
+   * asked, no worktree folder (spec §7.1).
+   */
+  private async freeBranch(
+    git: Git,
+    profile: Profile,
+    targets: { project: Project; remote: RemoteHeads }[],
+    branch: string,
+  ): Promise<string> {
+    const taken = async (name: string) => {
+      for (const { project, remote } of targets) {
+        const repo = expandHome(project.repoPath);
+        if (await git.localBranchExists(repo, name)) return true;
+        if (project.remote && (await git.trackingBranchExists(repo, project.remote, name)))
+          return true;
+        if (remote && 'heads' in remote && remote.heads.has(name)) return true;
+        if (fs.existsSync(path.join(expandHome(projectWorktreeDir(profile, project)), name)))
+          return true;
+      }
+      return false;
+    };
+    for (let n = 1; n <= 1000; n++) {
+      const name = n === 1 ? branch : numberedBranch(branch, n);
+      if (!(await taken(name))) return name;
+    }
+    throw new Error(`No free branch name like ${branch}`);
+  }
+
+  /**
+   * One repository's worktree for a workspace (spec §7.3 steps 1–4): fetches
+   * the base, adds the worktree with its branch, copies the .worktreeinclude
+   * files and writes the task file. A base that isn't on the remote yet, or a
+   * fetch that fails, starts from the local base branch: the note says so.
    */
   private async addRepoWorktree(
     git: Git,
     project: Project,
+    remoteHeads: RemoteHeads,
     worktreePath: string,
     branch: string,
     base: string,
     task: WorkspaceTask,
     { named, onCreated }: { named: boolean; onCreated: () => void },
-  ): Promise<void> {
+  ): Promise<string | null> {
     const repo = expandHome(project.repoPath);
     const of = named ? ` (${project.name})` : '';
     let startPoint = base;
-    if (project.remote) {
+    let note: string | null = null;
+    if (project.remote && remoteHeads) {
       const remote = project.remote;
-      if (
-        await step(`Checking the remote${of}`, () => git.remoteBranchExists(repo, remote, branch))
-      ) {
+      let reason = 'error' in remoteHeads ? remoteHeads.error : null;
+      if ('heads' in remoteHeads && remoteHeads.heads.has(branch)) {
         throw new Error(
           `${remote}${named ? ` of ${project.name}` : ''} already has a branch named ${branch}`,
         );
       }
-      await step(`git fetch ${remote} ${base}${of}`, () => git.fetch(repo, remote, base));
-      startPoint = `${remote}/${base}`;
+      if ('heads' in remoteHeads && remoteHeads.heads.has(base)) {
+        try {
+          await git.fetch(repo, remote, base);
+          startPoint = `${remote}/${base}`;
+        } catch (error) {
+          reason = gitReason(error);
+        }
+      }
+      if (startPoint === base) {
+        if (!(await git.localBranchExists(repo, base))) {
+          throw new Error(
+            reason
+              ? `Couldn't fetch ${remote}/${base}${of} (${reason}), and there is no local branch ${base}`
+              : `${base} is neither on ${remote} nor a local branch${of}`,
+          );
+        }
+        note = reason
+          ? `Couldn't fetch ${remote}/${base}${of} (${reason}); the workspace starts from your local ${base}`
+          : `${base} isn't on ${remote}${of} yet; the workspace starts from your local ${base}`;
+      }
     }
     fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
     await step(`git worktree add${of}`, () =>
@@ -504,6 +637,7 @@ export class WorkspaceService {
       fs.writeFileSync(path.join(dir, 'task.md'), taskFile(task));
       await this.excludeRepoDir(git, worktreePath);
     });
+    return note;
   }
 
   private async removeCreated(
@@ -830,13 +964,24 @@ export class WorkspaceService {
     if (fs.existsSync(worktreePath)) throw new Error(`${worktreePath} already exists`);
     const base = this.projectBase(profile, project);
     let created = false;
+    const notes: string[] = [];
     try {
-      await this.addRepoWorktree(git, project, worktreePath, branch, base, workspace.task, {
-        named: true,
-        onCreated: () => {
-          created = true;
+      const note = await this.addRepoWorktree(
+        git,
+        project,
+        await this.askRemote(git, project),
+        worktreePath,
+        branch,
+        base,
+        workspace.task,
+        {
+          named: true,
+          onCreated: () => {
+            created = true;
+          },
         },
-      });
+      );
+      if (note) notes.push(note);
       this.records.addRepo(workspaceId, { projectId, worktreePath, baseBranch: base });
     } catch (error) {
       if (created) await this.removeCreated(git, [{ repo, worktreePath }], branch);
@@ -852,17 +997,23 @@ export class WorkspaceService {
     if (plan.error) {
       this.records.setSetupError(workspaceId, projectId, plan.error);
       await this.setupFinished(workspaceId);
-      return { workspace: this.workspace(workspaceId), setup: null, claude: null, addDirLine };
+      return {
+        workspace: this.workspace(workspaceId),
+        setup: null,
+        claude: null,
+        addDirLine,
+        notes,
+      };
     }
     if (plan.setup.length > 0) {
       const [setup] = await this.startSetups(linked, [{ projectId, plan }], {
         start: false,
         restart: restart && claudeRunning,
       });
-      return { workspace: linked, setup: setup ?? null, claude: null, addDirLine };
+      return { workspace: linked, setup: setup ?? null, claude: null, addDirLine, notes };
     }
     const claude = restart && claudeRunning ? await this.restartClaude(workspaceId) : null;
-    return { workspace: linked, setup: null, claude, addDirLine };
+    return { workspace: linked, setup: null, claude, addDirLine, notes };
   }
 
   /**

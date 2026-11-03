@@ -4,6 +4,7 @@ import {
   cleanTitle,
   type LookupResult,
   lookupFailed,
+  lookupNotFound,
   parseClaudeLookup,
 } from '@shared/lookup';
 import type { TaskLookup } from '@shared/schemas';
@@ -160,7 +161,7 @@ export class TaskLookupService {
       return lookupFailed(`The lookup failed (exit ${exited.code ?? '?'})${why ? `: ${why}` : ''}`);
     }
     const title = cleanTitle(exited.stdout, taskId);
-    return title ? { ok: true, title } : lookupFailed('The lookup printed nothing');
+    return title ? { ok: true, title } : lookupNotFound('The lookup printed nothing');
   }
 
   cancel(requestId: string): void {
