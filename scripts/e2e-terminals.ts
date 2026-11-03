@@ -5,6 +5,8 @@
  * Claude's full-screen mode. After every switch the page has one terminal,
  * every prompt marker shown is that terminal's own (one of its numbers,
  * never another workspace's), and the terminal was repainted when shown.
+ * A full-screen session with more output than the replay keeps comes back
+ * from another profile still in the alternate screen, with no marks (D9).
  * Runs with a throwaway HOME and a fake `claude`.
  *
  *   tsx scripts/e2e-terminals.ts [--dev] [--screenshots=<dir>] [extra Electron args…]
@@ -64,8 +66,10 @@ async function main() {
     const { clone: repo } = fx.cloneWithRemote('api', 'main');
     fs.writeFileSync(path.join(fx.root, '.zshrc'), '');
     // A stand-in for Claude: a line `p <text>` is a prompt (printed, then the
-    // UserPromptSubmit hook, then an answer); `fullscreen` and `classic`
-    // enter and leave the alternate screen. Scripted tests never start the real one.
+    // UserPromptSubmit hook, then an answer); `r <text>` a response (printed,
+    // then the Stop hook); `fullscreen` and `classic` enter and leave the
+    // alternate screen; `flood` prints more than the replay keeps, as Claude's
+    // full-screen renderer does over time. Scripted tests never start the real one.
     const fakeClaude = path.join(fx.root, 'bin', 'fake-claude');
     fs.mkdirSync(path.dirname(fakeClaude));
     fs.writeFileSync(
@@ -84,6 +88,8 @@ while IFS= read -r line; do
   case "$line" in
     p\\ *) t="\${line#p }"; printf '\\342\\235\\257 %s\\n' "$t"; hook UserPromptSubmit "{\\"prompt\\":\\"$t\\"}"
       i=0; while [ $i -lt 6 ]; do printf 'answer %s to %s\\n' $i "$t"; i=$((i+1)); done ;;
+    r\\ *) t="\${line#r }"; printf '\\342\\217\\272 %s\\n\\n' "$t"; hook Stop "{\\"last_assistant_message\\":\\"$t\\"}" ;;
+    flood) yes 'Full-screen redraw of the conversation' | head -n 60000; echo 'Flood done' ;;
     fullscreen) printf '\\033[?1049h\\033[HFull screen\\n' ;;
     classic) printf '\\033[?1049l' ;;
   esac
@@ -141,6 +147,7 @@ exec sleep 600
         await typeInTerminal(page, `p ${prompt}`);
         await sleep(300);
       }
+      if (prompts.length === 0) return;
       await page.waitFor(
         `!!document.querySelector('[data-prompt-mark="${prompts.length}"]')`,
         `${task}'s markers`,
@@ -239,6 +246,92 @@ exec sleep 600
     );
     await check('BBB-2', 'Beta', ['1'], true);
     await check('AAA-1', 'Alpha', ['1', '2', '3'], true);
+
+    // To the Personal profile and back to Work: the shown terminal attaches again.
+    const otherProfile = async () => {
+      await page.eval(`document.querySelector('[data-profile-tab="personal"]').click()`);
+      await page.waitFor(
+        `document.querySelector('[data-profile-tab="personal"]').getAttribute('aria-selected') === 'true' && !!document.querySelector('[data-terminal][data-connected]')`,
+        'the Personal profile',
+      );
+      await sleep(300);
+      await page.eval(`document.querySelector('[data-profile-tab="work"]').click()`);
+      await page.waitFor(
+        `document.querySelector('[data-profile-tab="work"]').getAttribute('aria-selected') === 'true'`,
+        'the Work profile',
+      );
+    };
+    /** Each placed mark's line in the shown terminal: its kind, number and the line's text. */
+    const markLines = () =>
+      page.eval<string[]>(`(() => {
+        const c = [...document.querySelectorAll('[data-terminal]')].find((t) => t.offsetParent);
+        return c.aids.marks.filter((m) => m.marker && !m.marker.isDisposed).map((m) =>
+          m.mark.kind + ' ' + c.xterm.buffer.active.getLine(m.marker.line).translateToString(true).trim());
+      })()`);
+    /** What the conversation aids show in the terminal: prompt numbers, Copy buttons, the navigator. */
+    const aidsShown = `(() => {
+      const visible = (s) => [...document.querySelectorAll(s)].filter((m) => m.style.display !== 'none' && m.offsetParent).length;
+      return { prompts: visible('[data-prompt-mark]'), copies: visible('[data-response-mark]'), navigator: visible('[data-prompt-navigator]') };
+    })()`;
+
+    // Classic: after a switch of profiles, the marks are on their own lines.
+    await otherProfile();
+    await check('AAA-1', 'Alpha', ['1', '2', '3'], true);
+    assert.deepEqual(
+      await markLines(),
+      ['prompt ❯ first', 'prompt ❯ second', 'prompt ❯ third'],
+      'Alpha: each marker on its prompt',
+    );
+
+    // Full screen, with more output than the replay keeps (its ?1049h trimmed
+    // off): back from another profile, the terminal is still in the alternate
+    // screen and shows no prompt numbers, Copy buttons or navigator (D9).
+    await newWorkspace('CCC-3 Gamma', []);
+    const gammaTerminal = `[...document.querySelectorAll('[data-terminal]')].find((t) => t.offsetParent)`;
+    const bufferType = `${gammaTerminal}?.xterm.buffer.active.type`;
+    await typeInTerminal(page, 'fullscreen');
+    await page.waitFor(`${bufferType} === 'alternate'`, 'Gamma in the alternate screen');
+    await typeInTerminal(page, 'flood');
+    const screenText = `(() => { const b = ${gammaTerminal}.xterm.buffer.active; let s = ''; for (let y = 0; y < b.length; y++) s += b.getLine(y).translateToString(true) + '\\n'; return s; })()`;
+    await page.waitFor(`${screenText}.includes('Flood done')`, 'the flood', 60_000);
+    for (const [prompt, response] of [
+      ['one', 'Answer one.'],
+      ['two', 'Answer two.'],
+      ['three', 'Answer three.'],
+    ]) {
+      await typeInTerminal(page, `p ${prompt}`);
+      await page.waitFor(`${screenText}.includes('answer 5 to ${prompt}')`, `prompt ${prompt}`);
+      await typeInTerminal(page, `r ${response}`);
+      await page.waitFor(`${screenText}.includes('⏺ ${response}')`, `response ${response}`);
+    }
+    await sleep(800);
+    const none = { prompts: 0, copies: 0, navigator: 0 };
+    assert.deepEqual(await page.eval(aidsShown), none, 'Gamma: no aids in full screen');
+    for (let round = 0; round < 2; round++) {
+      await otherProfile();
+      await page.waitFor(
+        `(() => { const t = ${gammaTerminal}; return !!t?.dataset.connected && Number(t.dataset.repaints ?? 0) > 0; })()`,
+        'Gamma shown again',
+      );
+      await sleep(800);
+      assert.equal(await page.eval(bufferType), 'alternate', 'Gamma: still the alternate screen');
+      assert.deepEqual(await page.eval(aidsShown), none, 'Gamma: no aids after the switch');
+      await screenshot(page, screenshotDir, `terminals-4-full-screen-switch-${round}.png`);
+    }
+    // Back to classic: a prompt there gets its marks on its own lines.
+    await typeInTerminal(page, 'classic');
+    await page.waitFor(`${bufferType} === 'normal'`, 'Gamma in the normal screen');
+    await typeInTerminal(page, 'p four');
+    await page.waitFor(`${screenText}.includes('answer 5 to four')`, 'prompt four');
+    await typeInTerminal(page, 'r Answer four.');
+    await page.waitFor(`(${aidsShown}).copies === 1`, "Gamma's Copy button");
+    await otherProfile();
+    await page.waitFor(`(${aidsShown}).copies === 1`, "Gamma's Copy button after the switch");
+    assert.deepEqual(
+      await markLines(),
+      ['prompt ❯ four', 'response ⏺ Answer four.'],
+      'Gamma: marks on their own lines',
+    );
 
     console.log(`e2e terminals test passed (${devMode ? 'dev server' : 'production build'})`);
   } catch (error) {

@@ -264,6 +264,14 @@
   }
 }
 
+/* ---------- Claude terminal decorations (spec §6.8, D9) ---------- */
+/* Hidden while a replay is drawn and while the alternate screen shows. */
+[data-aids-hidden] [data-prompt-mark],
+[data-aids-hidden] [data-response-mark] {
+  /* biome-ignore lint/complexity/noImportantStyles: xterm sets the decorations' display inline */
+  display: none !important;
+}
+
 /* ---------- Spec view: a status file rendered as Markdown (spec §13.8) ---------- */
 .doc-markdown {
   font-size: 14px;

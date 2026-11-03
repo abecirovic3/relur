@@ -9,7 +9,7 @@ import type {
 } from '@shared/terminal-protocol';
 import * as pty from 'node-pty';
 import type { Env } from '../env/scrub';
-import { Scrollback } from './scrollback';
+import { ENTER_ALTERNATE, Scrollback } from './scrollback';
 
 /** Where an attached view receives terminal messages. */
 export interface TerminalSink {
@@ -259,10 +259,12 @@ export class SessionHost {
     this.flush(session);
     const { start } = session.scrollback;
     session.marks = session.marks.filter((m) => m.at >= start);
-    const marks = session.marks.map((m) => ({ at: m.at - start, mark: m.mark }));
+    // Kept output that began in the alternate screen replays there (spec §6.8, D9).
+    const prefix = session.scrollback.startsAlternate ? ENTER_ALTERNATE : '';
+    const marks = session.marks.map((m) => ({ at: prefix.length + m.at - start, mark: m.mark }));
     sink.send({
       type: 'replay',
-      data: session.scrollback.text(),
+      data: prefix + session.scrollback.text(),
       ...(marks.length > 0 ? { marks } : {}),
     });
     if (session.info.status === 'exited') {

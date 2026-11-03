@@ -72,6 +72,7 @@ export function TerminalView({
     count: 0,
     current: 0,
     alternate: false,
+    hidden: false,
   });
   const workspaceId = conversation?.workspaceId ?? null;
   // The workspace's view follows the navigator's state (spec §6.8).
@@ -204,7 +205,7 @@ export function TerminalView({
     term.attachCustomKeyEventHandler((event) => {
       // Previous and next prompt (spec §6.8).
       const prompt = matchShortcut('promptStep', event, isMac);
-      if (aids && prompt !== -1 && !aids.alternate) {
+      if (aids && prompt !== -1 && !aids.hidden) {
         if (event.type === 'keydown') aids.step(prompt === 0 ? -1 : 1);
         event.preventDefault();
         return false;
@@ -254,18 +255,24 @@ export function TerminalView({
           const message = event.data;
           if (message.type === 'exit') term.write(exitLine(message));
           else if (message.type === 'mark') addMark(message.mark);
-          else if (message.type === 'replay' && message.marks?.length) {
+          else if (message.type === 'data') term.write(message.data);
+          else {
+            // Nothing of the aids shows until the replay is drawn (spec §6.8, D9).
+            aids?.replay(true);
             // The replay in pieces, each mark after the output it followed.
             let from = 0;
-            for (const { at, mark } of message.marks) {
+            for (const { at, mark } of message.marks ?? []) {
               term.write(message.data.slice(from, at));
               addMark(mark);
               from = at;
             }
             term.write(message.data.slice(from));
-          } else term.write(message.data);
-          // Shown with its own output: once the replay is drawn, everything again.
-          if (message.type === 'replay') term.write('', repaint);
+            // Shown with its own output: once the replay is drawn, everything again.
+            term.write('', () => {
+              aids?.replay(false);
+              repaint();
+            });
+          }
         };
         port.start();
         for (const data of queued.splice(0)) send(data);
@@ -299,7 +306,7 @@ export function TerminalView({
     // gutter for prompt numbers (components.md).
     <div className={`relative h-full w-full bg-term pt-2 ${workspaceId ? 'pl-9' : 'pl-3.5'}`}>
       <div ref={containerRef} data-terminal={sessionId} className="h-full w-full" />
-      {nav.count > 0 && !nav.alternate ? (
+      {nav.count > 0 && !nav.hidden ? (
         <div
           data-prompt-navigator
           className="absolute top-2 right-4 z-10 flex h-6 items-center gap-1 rounded-full border border-line-strong bg-raised pr-1 pl-2.5 text-xs text-fg-muted shadow-overlay"

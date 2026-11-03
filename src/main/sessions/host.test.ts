@@ -175,6 +175,26 @@ describe('SessionHost', () => {
     await host.stop(session.id);
   });
 
+  it('replays in the alternate screen when its switch was trimmed off (spec §6.8, D9)', async () => {
+    const host = new SessionHost({ scrollbackSize: 200 });
+    const session = host.spawn(
+      sh(
+        "printf 'shell\\n\\033[?1049hdrawn\\n'; i=0; while [ $i -lt 40 ]; do echo full-screen line; i=$((i+1)); done; sleep 30",
+      ),
+    );
+    await until(() => host.scrollback(session.id).endsWith('full-screen line\r\n'), 'output');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(host.scrollback(session.id)).not.toContain('1049');
+    host.mark(session.id, { kind: 'prompt', text: 'p' });
+    const view = recorder();
+    host.attach(session.id, view.sink);
+    const replay = view.messages[0] as { data: string; marks: { at: number }[] };
+    expect(replay.data.startsWith('\x1b[?1049h')).toBe(true);
+    // The mark stays at the end of the output, after the switch.
+    expect(replay.marks[0]?.at).toBe(replay.data.length);
+    await host.stop(session.id);
+  });
+
   it('writes input to the process', async () => {
     const host = new SessionHost();
     const session = host.spawn(sh('read line; printf "got:%s" "$line"'));
