@@ -36,7 +36,7 @@ One command for macOS and Linux: it picks your platform and chip, checks the dow
 
 Or download the app directly:
 
-| | |
+| Platform | Download |
 |---|---|
 | **macOS** 13 or later | [Apple Silicon](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-arm64.dmg) · [Intel](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-x64.dmg) |
 | **Linux** x64 and arm64 | `.deb` [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.deb) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.deb) · AppImage [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.AppImage) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.AppImage) |

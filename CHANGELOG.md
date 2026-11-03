@@ -4,9 +4,21 @@ All notable changes to Relur. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-03
+
+### Added
+
+- Add project creates a new repository or clones one: the dialog offers **Existing folder**, **New repository** and **Clone from URL**. A new repository gets `git init` on the profile's base branch and a first commit with the profile's identity; a clone runs in a terminal in the dialog, so git's prompts work, and a failed clone keeps git's output and adds nothing. On the command line: `relur add --new <path>` and `relur add --clone <url> [<path>]`.
+- The project view's **Remote** row has **Change…**, and an `origin` added later to a project without a remote is picked up with a notice. The Changes panel explains what Push and Create PR need.
+
 ### Changed
 
 - Linux is no longer beta: Relur has been tested on Ubuntu 24.04 with GNOME. The `.deb` stays the recommended install on Ubuntu 23.10 and later.
+- Terminals redraw in full when they're shown, resized or re-themed, and after a lost WebGL context, so no content from the terminal shown before can remain.
+
+### Fixed
+
+- On Linux, logging out could end Relur before it saved what the window remembers (sizes, collapsed panels and other preferences). They're now written to disk shortly after every change and first thing when the app is told to end; a hangup (SIGHUP) now quits like SIGTERM.
 
 ## [0.2.0] - 2026-11-02
 
@@ -39,6 +51,7 @@ All notable changes to Relur. The format follows [Keep a Changelog](https://keep
 - The `relur` command line tool (`add`, `link`, `projects`), the in-app Guide, and Open in editor.
 - macOS (Apple Silicon and Intel) and Linux beta builds (AppImage and `.deb`), with an install script. Both Linux builds keep Chromium's sandbox, the AppImage on Ubuntu 23.10 and later once it's listed for it, and the window says so when it runs without it.
 
-[Unreleased]: https://github.com/dino-zecevic/relur/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/dino-zecevic/relur/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/dino-zecevic/relur/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dino-zecevic/relur/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dino-zecevic/relur/releases/tag/v0.1.0
