@@ -4,6 +4,20 @@ All notable changes to Relur. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-03
+
+### Added
+
+- **Report a Bug…** and **Request a Feature…** in the Help menu (under the Guide, on macOS too) and as links on the Guide's Troubleshooting page. Both open the repository's issue forms in the browser; a bug report comes prefilled with the app version, the OS and its version, and the Claude Code version. Nothing is sent.
+
+### Fixed
+
+- New workspace accepts any task text and always gives a valid branch name: what git refuses is replaced, a template with only `{id}` or `{slug}` fills it from the other, and text that gives no name becomes `task`.
+- A branch from the task that's already taken, also only on the remote, becomes the next free name (`-2`, `-3` …). A typed one that's taken says so and offers **Use** with a free name.
+- Task lookup no longer blocks: an id it doesn't find creates the workspace without a title, with a note, and a failed lookup offers **Create anyway** (↵) or **Cancel**.
+- A base branch that isn't on the remote yet, or a fetch that fails, starts the workspace from the local base branch with a note; Create fails only when the base is on neither.
+- Prompt marks, Copy buttons and the prompt navigator could appear on the wrong lines of a full-screen Claude tab after switching back to it. The tab now stays in the alternate screen when it's shown again.
+
 ## [0.3.0] - 2026-11-03
 
 ### Added
@@ -51,7 +65,8 @@ All notable changes to Relur. The format follows [Keep a Changelog](https://keep
 - The `relur` command line tool (`add`, `link`, `projects`), the in-app Guide, and Open in editor.
 - macOS (Apple Silicon and Intel) and Linux beta builds (AppImage and `.deb`), with an install script. Both Linux builds keep Chromium's sandbox, the AppImage on Ubuntu 23.10 and later once it's listed for it, and the window says so when it runs without it.
 
-[Unreleased]: https://github.com/dino-zecevic/relur/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/dino-zecevic/relur/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/dino-zecevic/relur/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dino-zecevic/relur/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dino-zecevic/relur/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dino-zecevic/relur/releases/tag/v0.1.0
