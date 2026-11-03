@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { formatShortcut, SHORTCUTS, shortcutsByGroup } from '@shared/shortcuts';
 import { describe, expect, it } from 'vitest';
-import { buildPages, fill, headings, pageFiles, SECTIONS } from './content';
+import { buildPages, fill, headings, isGuideAction, pageFiles, SECTIONS } from './content';
 import { links, parsePage } from './markdown';
 
 const files = pageFiles();
@@ -62,6 +62,10 @@ describe.each([
     for (const page of pages) {
       for (const href of links(page.blocks)) {
         if (/^https?:/.test(href)) continue;
+        if (href.startsWith('app:')) {
+          if (!isGuideAction(href)) broken.push(`${page.id}: ${href} (no action)`);
+          continue;
+        }
         const [target = '', anchor] = href.split('#');
         const linked = byId.get(target || page.id);
         if (!linked) broken.push(`${page.id}: ${href} (no page)`);

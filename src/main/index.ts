@@ -18,6 +18,7 @@ import { UsageRecords } from './db/usage';
 import { WorkspaceRecords } from './db/workspaces';
 import { EditorService } from './editor/service';
 import { EnvService } from './env/service';
+import { bugReportUrl, featureRequestUrl, osOption, osVersion } from './feedback';
 import { helperPath, stableHelper, writeSessionBin } from './helper-files';
 import {
   migrateSettings,
@@ -30,7 +31,7 @@ import { markShown, wasShown } from './notices';
 import { appConfigDir, contractHome } from './paths';
 import { RemoteWatch } from './projects/remote-watch';
 import { chromiumSandboxOff } from './sandbox';
-import { installSecurityPolicies } from './security';
+import { installSecurityPolicies, openExternalSafe } from './security';
 import { isSelfTest, runSelfTest } from './self-test';
 import { CliLinkService } from './services/cli-link';
 import { ProfileService } from './services/profiles';
@@ -350,6 +351,36 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     });
     atShutdown(() => updates.dispose());
     const menuRequests = new EventEmitter();
+    // Report a Bug… and Request a Feature… (spec §6.12): the issue forms in the
+    // browser, the bug report prefilled; nothing is sent.
+    const feedback = {
+      reportBug: () => {
+        let osRelease: string | null = null;
+        try {
+          if (process.platform === 'linux') osRelease = fs.readFileSync('/etc/os-release', 'utf8');
+        } catch {}
+        openExternalSafe(
+          bugReportUrl({
+            appVersion: app.getVersion(),
+            os: osOption({
+              platform: process.platform,
+              arch: process.arch,
+              packaged: app.isPackaged,
+              appImage: Boolean(process.env.APPIMAGE),
+            }),
+            osVersion: osVersion({
+              platform: process.platform,
+              systemVersion: process.getSystemVersion(),
+              osRelease,
+              env: process.env,
+            }),
+            // The setup check starts below, before any menu item can be chosen.
+            claudeVersion: setup.claudeVersion(),
+          }),
+        );
+      },
+      requestFeature: () => openExternalSafe(featureRequestUrl()),
+    };
     installAppMenu(
       config,
       (what) => {
@@ -360,6 +391,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
         setAutomatic: (on) => updates.setAutomatic(on),
         checkNow: () => void checkForUpdatesNow(updates),
       },
+      feedback,
     );
     const workspaceRecords = new WorkspaceRecords(db);
     // Workspace states from hooks (spec §10), their alerts and the Dock badge.
@@ -542,6 +574,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
         answer: (close: boolean) => answerCloseNotice?.(close),
       },
       menuRequests,
+      feedback,
       helper,
       usage,
       status,

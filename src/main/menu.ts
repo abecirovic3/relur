@@ -13,14 +13,21 @@ export interface MenuUpdates {
   checkNow: () => void;
 }
 
+/** Help › Report a Bug… and Request a Feature… (spec §6.12). */
+export interface MenuFeedback {
+  reportBug: () => void;
+  requestFeature: () => void;
+}
+
 export function installAppMenu(
   config: ConfigStore,
   request: (what: MenuRequest) => void,
   updates: MenuUpdates,
+  feedback: MenuFeedback,
 ): void {
-  build(config, request, updates);
+  build(config, request, updates, feedback);
   // The checkboxes follow config.json, also after Reload Config.
-  config.onChange(() => build(config, request, updates));
+  config.onChange(() => build(config, request, updates, feedback));
 }
 
 function setQuitOnClose(config: ConfigStore, quit: boolean): void {
@@ -41,6 +48,7 @@ function build(
   config: ConfigStore,
   request: (what: MenuRequest) => void,
   updates: MenuUpdates,
+  feedback: MenuFeedback,
 ): void {
   const template = menuTemplate({
     isMac: process.platform === 'darwin',
@@ -52,6 +60,7 @@ function build(
     setQuitOnClose: (quit) => setQuitOnClose(config, quit),
     request,
     updates: { ...updates, automatic: config.get().config?.checkForUpdates === true },
+    feedback,
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -67,6 +76,7 @@ interface MenuOptions {
   request: (what: MenuRequest) => void;
   /** Check for Updates… and Check for Updates Automatically (spec §15.7). */
   updates?: MenuUpdates & { automatic: boolean };
+  feedback?: MenuFeedback;
 }
 
 /**
@@ -84,6 +94,7 @@ export function menuTemplate({
   setQuitOnClose,
   request,
   updates,
+  feedback,
 }: MenuOptions): MenuItemConstructorOptions[] {
   // In the app menu on macOS, in Help elsewhere.
   const updateItems: MenuItemConstructorOptions[] = updates
@@ -204,6 +215,14 @@ export function menuTemplate({
           registerAccelerator: false,
           click: () => request('guide'),
         },
+        // The issue forms in the browser; nothing is sent (spec §6.12).
+        ...(feedback
+          ? ([
+              { type: 'separator' },
+              { label: 'Report a Bug…', click: () => feedback.reportBug() },
+              { label: 'Request a Feature…', click: () => feedback.requestFeature() },
+            ] as const)
+          : []),
       ],
     },
   ];

@@ -3,6 +3,8 @@
  * endpoint on 127.0.0.1: the first-start question (nothing is sent before
  * it's answered), the menu items, the notice with Release notes, Update
  * without a terminal, Skip this version, and the manual check's messages.
+ * Also Help's Report a Bug… and Request a Feature… and their Guide links
+ * (spec §6.12): the issue forms' URLs, opened in the (stubbed) browser.
  * Runs with a throwaway HOME and a fake `claude`; never reaches GitHub.
  *
  *   tsx scripts/e2e-updates.ts [--dev] [extra Electron args…]
@@ -234,6 +236,78 @@ exec sleep 600
       ),
     );
     assert.equal(await page.eval(`!!${notice}`), false);
+
+    // Report a Bug… and Request a Feature… (spec §6.12): the issue forms, the
+    // bug report prefilled with the versions; nothing else is sent.
+    const NEW_ISSUE = `https://github.com/${BRAND.github.owner}/${BRAND.github.repo}/issues/new`;
+    const opened = () => mainProcess.eval<string[]>('globalThis.__opened');
+    const lastOpened = async (count: number, what: string) => {
+      await waitUntil(what, async () => (await opened()).length === count);
+      return (await opened()).at(-1) ?? '';
+    };
+    const checkBugReport = (url: string, what: string) => {
+      assert.ok(url.startsWith(`${NEW_ISSUE}?template=bug_report.yml&`), `${what}: ${url}`);
+      const params = new URL(url).searchParams;
+      assert.equal(params.get('app-version'), version, what);
+      // Tests run the unpackaged build.
+      assert.equal(params.get('os'), 'Built from source', what);
+      const osVersion = params.get('os-version') ?? '';
+      if (process.platform === 'darwin') assert.match(osVersion, /^macOS \d+(\.\d+)*$/, what);
+      else assert.ok(osVersion.length > 0, what);
+      // From the setup check (the fake claude's --version).
+      assert.equal(params.get('claude-version'), '9.9.9', what);
+      // Encoded: spaces as %20, never a raw space.
+      assert.ok(!url.includes(' '), what);
+    };
+    const helpItems = await mainProcess.eval<string[]>(`(() => {
+      const { Menu } = process.mainModule.require('electron');
+      const help = Menu.getApplicationMenu().items.find((i) => i.role === 'help');
+      return help.submenu.items.map((i) => i.type === 'separator' ? '-' : i.label);
+    })()`);
+    assert.deepEqual(
+      helpItems.slice(-4),
+      [`${BRAND.displayName} Guide`, '-', 'Report a Bug…', 'Request a Feature…'],
+      'Help ends with the Guide and the two items',
+    );
+    let count = (await opened()).length;
+    // Once the setup check at start has found the fake claude's version.
+    let report = '';
+    for (const end = Date.now() + 10_000; Date.now() < end; await sleep(200)) {
+      await clickMenuItem(mainProcess, 'Report a Bug…');
+      report = await lastOpened(++count, 'Report a Bug…');
+      if (new URL(report).searchParams.get('claude-version')) break;
+    }
+    checkBugReport(report, 'Report a Bug…');
+    await clickMenuItem(mainProcess, 'Request a Feature…');
+    assert.equal(
+      await lastOpened(++count, 'Request a Feature…'),
+      `${NEW_ISSUE}?template=feature_request.yml`,
+    );
+    // The same from the Guide's Troubleshooting page.
+    await page.eval(`document.querySelector('[data-guide-tab]').click()`);
+    await page.waitFor(`!!document.querySelector('[data-guide-search]')`, 'the Guide');
+    await page.eval(`document.querySelector('[data-guide-search]').focus()`);
+    await page.send('Input.insertText', { text: 'Request a Feature' });
+    await page.waitFor(
+      `!!document.querySelector('[data-guide-result="troubleshooting"]')`,
+      'the Troubleshooting result',
+    );
+    await page.eval(`document.querySelector('[data-guide-result="troubleshooting"]').click()`);
+    await page.waitFor(
+      `!!document.querySelector('[data-guide-link="app:report-bug"]')`,
+      'the Guide links',
+    );
+    assert.match(
+      await page.eval<string>(`document.querySelector('[data-guide-article]').innerText`),
+      /Nothing is sent/,
+    );
+    await page.eval(`document.querySelector('[data-guide-link="app:report-bug"]').click()`);
+    checkBugReport(await lastOpened(++count, 'the Guide bug link'), 'the Guide bug link');
+    await page.eval(`document.querySelector('[data-guide-link="app:request-feature"]').click()`);
+    assert.equal(
+      await lastOpened(++count, 'the Guide feature link'),
+      `${NEW_ISSUE}?template=feature_request.yml`,
+    );
     await quit(running);
 
     // 4. After a restart: no question; the check at start skips 99.0.0 but offers 100.0.0.

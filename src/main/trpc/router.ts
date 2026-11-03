@@ -27,7 +27,7 @@ import type { UsageRecords } from '../db/usage';
 import type { WorkspaceRecords } from '../db/workspaces';
 import type { EditorService } from '../editor/service';
 import type { EnvService } from '../env/service';
-import type { MenuRequest } from '../menu';
+import type { MenuFeedback, MenuRequest } from '../menu';
 import { contractHome, expandHome } from '../paths';
 import type { RemoteFound, RemoteWatch } from '../projects/remote-watch';
 import { chromiumSandboxOff } from '../sandbox';
@@ -75,6 +75,8 @@ export interface Services {
   usage: UsageRecords;
   /** Menu items the renderer answers with a dialog. */
   menuRequests: EventEmitter;
+  /** Report a Bug… and Request a Feature… (spec §6.12), also from the Guide. */
+  feedback: MenuFeedback;
   /** The compiled helper, or null when it wasn't built. */
   helper: string | null;
   /** Continuing interrupted work (spec §9.7). */
@@ -113,6 +115,7 @@ export function createAppRouter({
   statusPlatform,
   usage,
   menuRequests,
+  feedback,
   helper,
   quit,
   closeNotice,
@@ -1210,6 +1213,9 @@ export function createAppRouter({
       openExternal: publicProcedure
         .input(z.object({ url: z.string() }))
         .mutation(({ input }) => openExternalSafe(input.url)),
+      /** The issue forms in the browser (spec §6.12); nothing is sent. */
+      reportBug: publicProcedure.mutation(() => feedback.reportBug()),
+      requestFeature: publicProcedure.mutation(() => feedback.requestFeature()),
     }),
   });
 }

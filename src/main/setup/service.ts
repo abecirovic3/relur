@@ -130,6 +130,15 @@ export class SetupService {
     return out;
   }
 
+  /** The Claude Code version the first profile's last check found, in profile order; '' if none. */
+  claudeVersion(): string {
+    for (const profile of this.config.get().config?.profiles ?? []) {
+      const installed = this.results.get(profile.id)?.installed;
+      if (installed?.state === 'passed') return installed.value.version;
+    }
+    return '';
+  }
+
   passed(profileId: string): boolean {
     return setupPassed(this.results.get(profileId));
   }

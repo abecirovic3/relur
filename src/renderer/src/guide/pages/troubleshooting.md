@@ -65,3 +65,12 @@ Profiles, projects and their settings are kept in `config.json`. Most of it has 
 {{app}} was called {{oldApp}} before. Installing {{app}} quits and removes {{oldApp}}, after asking, and replaces its `{{oldCli}}` command with `{{cli}}`; run the installer from Terminal, not from a terminal inside {{oldApp}}. Its first start copies {{oldApp}}'s settings folder (profiles, projects, workspaces, skill sources and the window's preferences) and says once where the old folder is: it stays as it was, as a backup, and you can delete it once everything works. If {{oldApp}} is still running, {{app}} asks you to quit it first and copies on its next start. macOS asks again whether {{app}} may send notifications, as it's a new app to macOS.
 
 Workspaces made by {{oldApp}} stay where they are, in `~/{{oldHomeDir}}/worktrees` with their task file in `{{oldRepoDir}}/task.md`: git records a worktree's full path, so moving them would break them. Their Claude conversations, terminals and editors carry on. New workspaces go to `~/{{homeDir}}/worktrees`, with `{{repoDir}}/task.md`.
+
+## Report a bug or request a feature
+
+Something not listed here, or something missing? **Help › Report a Bug…** and **Help › Request a Feature…** open the form on GitHub in your browser; so do these links:
+
+- [Report a Bug…](app:report-bug): the form comes filled in with {{app}}'s version, your operating system and its version, and the Claude Code version from the [setup check](setup-check).
+- [Request a Feature…](app:request-feature)
+
+Nothing is sent: you see the whole form in your browser, can change anything, and decide whether to submit it.

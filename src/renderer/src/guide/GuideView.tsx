@@ -6,7 +6,14 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { trpcClient } from '../trpc';
 import { iconButton, isMac, Kbd, keyHint } from '../ui/controls';
 import { StatusGlyph } from '../ui/StatusGlyph';
-import { buildPages, type GuidePage, headings, pageFiles, SECTIONS } from './content';
+import {
+  buildPages,
+  type GuidePage,
+  headings,
+  isGuideAction,
+  pageFiles,
+  SECTIONS,
+} from './content';
 import type { Block, Inline } from './markdown';
 
 /** Built once: the pages don't change while the app runs. */
@@ -496,6 +503,12 @@ export function GuideView({
   const link = (href: string) => {
     if (/^https?:/.test(href)) {
       void trpcClient.shell.openExternal.mutate({ url: href });
+      return;
+    }
+    // The issue forms, as Help › Report a Bug… and Request a Feature… (spec §6.12).
+    if (isGuideAction(href)) {
+      if (href === 'app:report-bug') void trpcClient.shell.reportBug.mutate();
+      else void trpcClient.shell.requestFeature.mutate();
       return;
     }
     const to = target(href);
