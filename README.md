@@ -6,7 +6,7 @@
 
 **Run many Claude Code sessions side by side, each in its own worktree,<br>and know exactly when one needs you.**
 
-[**Download for macOS**](https://github.com/dino-zecevic/relur/releases/latest) · [Install](#install) · [Quick start](#quick-start) · [FAQ](#faq)
+[**Download**](https://github.com/dino-zecevic/relur/releases/latest) · [Install](#install) · [Quick start](#quick-start) · [FAQ](#faq)
 
 [![Latest release](https://img.shields.io/github/v/release/dino-zecevic/relur?label=release)](https://github.com/dino-zecevic/relur/releases/latest)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -28,13 +28,18 @@ Claude Code is great at one task at a time. Run three, and you're juggling termi
 
 ## Install
 
-macOS 13 or later, Apple Silicon or Intel:
-
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dino-zecevic/relur/main/install.sh | sh
 ```
 
-Or download the app: [Apple Silicon](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-arm64.dmg) · [Intel](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-x64.dmg)
+One command for macOS and Linux: it picks your platform and chip, checks the download against the release's checksums, and never uses sudo.
+
+Or download the app directly:
+
+| | |
+|---|---|
+| **macOS** 13 or later | [Apple Silicon](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-arm64.dmg) · [Intel](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-x64.dmg) |
+| **Linux** x64 and arm64 | `.deb` [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.deb) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.deb) · AppImage [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.AppImage) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.AppImage) |
 
 You also need [Claude Code](https://code.claude.com) (Relur offers to install it), a Claude plan and git.
 
@@ -43,9 +48,7 @@ You also need [Claude Code](https://code.claude.com) (Relur offers to install it
 
 <br>
 
-The same command installs the AppImage on Linux (x64 and arm64, glibc 2.31 or later). Or download it directly: AppImage [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.AppImage) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.AppImage), or `.deb` [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.deb) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.deb) for Debian and Ubuntu.
-
-Linux builds are tested on Ubuntu 24.04 with GNOME, and in Docker. **On Ubuntu 23.10 and later, install the `.deb`:** it sets up Chromium's sandbox by itself. The AppImage works there too once listed for the sandbox; the install script prints the two commands. The AppImage needs `fuse3`. The app's Guide has a page on Linux.
+Linux builds need glibc 2.31 or later and are tested on Ubuntu 24.04 with GNOME, and in Docker. **On Ubuntu 23.10 and later, install the `.deb`:** it sets up Chromium's sandbox by itself. The AppImage works there too once listed for the sandbox; the install script prints the two commands. The AppImage needs `fuse3`. The app's Guide has a page on Linux.
 
 </details>
 
