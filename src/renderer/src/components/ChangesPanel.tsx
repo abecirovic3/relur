@@ -1,3 +1,4 @@
+import { BRAND } from '@shared/brand';
 import { type ChangedFile, type ChangeGroup, diffFirstLine, type FileDiff } from '@shared/changes';
 import type { Project } from '@shared/schemas';
 import { matchShortcut } from '@shared/shortcuts';
@@ -397,7 +398,12 @@ function FinishControls({ workspace }: { workspace: Workspace }) {
         </div>
       ) : null}
       {!s.hasRemote ? (
-        <p className="text-sm text-fg-subtle">No remote: Push and Create PR aren't available.</p>
+        <p data-no-remote className="text-sm text-fg-subtle">
+          No remote: Push and Create PR need one. Add it in a Shell tab with{' '}
+          <span className="font-mono select-text">git remote add origin &lt;url&gt;</span>;{' '}
+          {BRAND.displayName} picks up <span className="font-mono">origin</span> by itself, or
+          choose another under Remote in the project view.
+        </p>
       ) : null}
       {s.uncommitted === 0 && s.unpushed === 0 && !s.pushed && s.hasRemote ? (
         <p className="text-sm text-fg-subtle">Nothing to commit or push yet.</p>

@@ -220,6 +220,16 @@ export function App() {
         void queryClient.invalidateQueries({ queryKey: trpc.workspaces.list.queryKey() }),
     }),
   );
+  // A remote added to a project that had none (spec §6.10).
+  useSubscription(
+    trpc.projects.remoteFound.subscriptionOptions(undefined, {
+      onData: (found) =>
+        setAppNotice({
+          text: `${found.projectName} now uses the remote ${found.remote}: Push and Create PR are available`,
+          info: true,
+        }),
+    }),
+  );
   // Open as workspace for a worktree made outside the app (spec §13.6).
   const [adopting, setAdopting] = useState<{ projectId: string; worktree: OtherWorktree } | null>(
     null,
@@ -982,6 +992,7 @@ export function App() {
           {addingProject && profile ? (
             <AddProjectDialog
               profile={profile}
+              projects={profileProjects}
               onClose={() => setAddingProject(false)}
               onAdded={(added) => {
                 setAddingProject(false);

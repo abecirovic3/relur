@@ -20,6 +20,20 @@ Add every repository in `~/Projects` to Work, one level down, with the same rule
 {{cli}} add ~/Projects --all --profile work
 ```
 
+Make a new repository and add it, as **New repository** in the dialog does (`--no-readme` and `--no-gitignore` leave those files out of the first commit):
+
+```
+{{cli}} add --new ~/code/my-app --profile work
+```
+
+Clone a repository into `./app` and add it:
+
+```
+{{cli}} add --clone git@example.com:team/app.git --profile work
+```
+
+The clone runs right in the terminal you typed it in, with that terminal's own environment, so passphrases and sign-in prompts appear there. A path after the URL clones somewhere else. If git fails, nothing is added.
+
 Without `--all`, a folder that isn't a repository is refused with a hint to use it. `--name` and `--base` set the project's name and base branch for a single repository. `{{cli}} add --help` shows every option.
 
 ## Linking a repository to a workspace
@@ -33,4 +47,4 @@ In a workspace's terminals, and in its Claude, `{{cli}} link <project>` links an
 
 ## When it doesn't work
 
-{{app}} has to be running: the tool talks to it and never edits the settings itself. Exit codes: `0` added (or linked), `1` refused (with the reason), `2` the app isn't running.
+{{app}} has to be running: the tool talks to it and never edits the settings itself. Exit codes: `0` added (or linked), `1` refused (with the reason) or the clone failed, `2` the app isn't running.

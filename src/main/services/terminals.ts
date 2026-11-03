@@ -345,6 +345,27 @@ export class TerminalService {
     });
   }
 
+  /**
+   * `git clone` for Add project's Clone from URL (spec §6.1), in a visible
+   * terminal with the profile environment, so SSH passphrases and sign-in
+   * prompts work as in the user's own terminal.
+   */
+  async cloneSession(profileId: string, url: string, target: string): Promise<SessionInfo> {
+    const profile = this.env.profile(profileId);
+    const env = await this.processEnv(profile);
+    const git = resolveExecutable('git', env);
+    if (!git) throw new Error('git was not found on the PATH of your login shell');
+    return this.host.spawn({
+      kind: 'setup',
+      title: `Clone ${url}`,
+      command: git,
+      args: ['clone', '--', url, target],
+      cwd: path.dirname(target),
+      env,
+      profileId: profile.id,
+    });
+  }
+
   private project(projectId: string): Project {
     const project = this.config.require().projects.find((p) => p.id === projectId);
     if (!project) throw new Error(`Unknown project "${projectId}"`);

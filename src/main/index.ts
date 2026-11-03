@@ -28,6 +28,7 @@ import {
 import { installAppMenu } from './menu';
 import { markShown, wasShown } from './notices';
 import { appConfigDir, contractHome } from './paths';
+import { RemoteWatch } from './projects/remote-watch';
 import { chromiumSandboxOff } from './sandbox';
 import { installSecurityPolicies } from './security';
 import { isSelfTest, runSelfTest } from './self-test';
@@ -480,6 +481,11 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     void worktreeNotices.start();
     app.on('browser-window-focus', () => worktreeNotices.focused());
     atShutdown(() => worktreeNotices.dispose());
+    // A remote added to a project that had none (spec §6.10).
+    const remoteWatch = new RemoteWatch(config, projects);
+    remoteWatch.start();
+    app.on('browser-window-focus', () => remoteWatch.focused());
+    atShutdown(() => remoteWatch.dispose());
     app.on('browser-window-focus', () => workflow.refreshAll());
     atShutdown(() => {
       workflow.dispose();
@@ -554,6 +560,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       workflow,
       workflowSetup,
       worktreeNotices,
+      remoteWatch,
     });
     showMainWindow();
     showMigrationNotice(dataDir);

@@ -1460,8 +1460,9 @@ exec sleep 600
       `document.querySelector('h1')?.textContent === 'api-service'`,
       'the project',
     );
+    const worktreesDetail = `document.querySelector('[data-detail=Worktrees]')`;
     await answerFolderPanel(path.join(repo, 'src'));
-    await clickButtonText(page, 'Change…');
+    await clickButtonText(page, 'Change…', worktreesDetail);
     await page.waitFor(
       `document.body.innerText.includes("can't go inside the repository's main checkout")`,
       'the refusal',
@@ -1469,7 +1470,7 @@ exec sleep 600
     const elsewhere = path.join(fx.root, 'trees-elsewhere');
     fs.mkdirSync(elsewhere);
     await answerFolderPanel(elsewhere);
-    await clickButtonText(page, 'Change…');
+    await clickButtonText(page, 'Change…', worktreesDetail);
     await page.waitFor(hasButton('Use default'), 'the own worktree folder');
     assert.equal(projects()[0].worktreeRoot, '~/trees-elsewhere');
     // The chosen folder is a parent: worktrees go in its hidden .worktrees/<project>.

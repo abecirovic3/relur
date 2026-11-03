@@ -29,7 +29,7 @@ The panel's bottom shows one step at a time:
 2. **Push**, while there are unpushed commits: **Push n commits to <remote>** sends the branch to the remote. If git has no credentials for the remote, you get an explanation instead of a password prompt: set up a credential helper, an SSH key or a CLI login like `gh auth login`, and push once from a Shell tab.
 3. **Create PR**, once the branch is pushed and no pull request is known: **Create PR** runs your [PR create command](#pr-commands); without one, **Create PR with Claude** asks Claude in the Claude tab to open the pull request.
 
-Then the panel shows the PR badge. Projects without a remote show only Commit.
+Then the panel shows the PR badge. Projects without a remote show only Commit, with a note on adding one: `git remote add origin <url>` in a Shell tab, which {{app}} picks up by itself. See [A new repository](add-project#a-new-repository).
 
 A workspace across several repositories has a section per repository, each with its own commit message, **Ask Claude to write it** (for that repository only), **Commit → Push → Create PR** row and PR badge; see [Tasks across repositories](tasks-across-repositories#finishing).
 

@@ -30,6 +30,8 @@ export interface AddRequest {
   terminalProfileId: string | null;
   /** `--all`: add every repository one level down in `path` (spec §7.5). */
   all?: boolean;
+  /** `--new`: make a new repository at `path` first (spec §7.5). */
+  create?: { readme: boolean; gitignore: boolean } | null;
 }
 
 export interface AddedProject {
@@ -274,6 +276,13 @@ export class HookBridge {
             base: str(body.base),
             terminalProfileId: str(body.terminalProfileId),
             all: body.all === true,
+            create:
+              body.create && typeof body.create === 'object'
+                ? {
+                    readme: (body.create as { readme?: unknown }).readme !== false,
+                    gitignore: (body.create as { gitignore?: unknown }).gitignore !== false,
+                  }
+                : null,
           })
           .catch((error: unknown): AddResult => ({ ok: false, error: message(error) }));
         return reply(200, result);

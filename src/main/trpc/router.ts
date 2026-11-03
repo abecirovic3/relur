@@ -29,6 +29,7 @@ import type { EditorService } from '../editor/service';
 import type { EnvService } from '../env/service';
 import type { MenuRequest } from '../menu';
 import { contractHome, expandHome } from '../paths';
+import type { RemoteFound, RemoteWatch } from '../projects/remote-watch';
 import { chromiumSandboxOff } from '../sandbox';
 import { openExternalSafe } from '../security';
 import type { CliLinkEvent, CliLinkService } from '../services/cli-link';
@@ -64,6 +65,7 @@ export interface Services {
   workflow: WorkflowService;
   workflowSetup: WorkflowSetupService;
   worktreeNotices: WorktreeNotices;
+  remoteWatch: RemoteWatch;
   finish: FinishService;
   editors: EditorService;
   setup: SetupService;
@@ -102,6 +104,7 @@ export function createAppRouter({
   workflow,
   workflowSetup,
   worktreeNotices,
+  remoteWatch,
   finish,
   editors,
   setup,
@@ -567,6 +570,90 @@ export function createAppRouter({
           }),
         )
         .mutation(({ input }) => projects.add(input)),
+      /** Native folder picker for a new repository's or clone's parent folder. */
+      pickParentFolder: publicProcedure.mutation(async ({ ctx }) => {
+        const win = windowOf(ctx.windowId);
+        const options = {
+          title: 'Choose the parent folder',
+          properties: ['openDirectory' as const, 'createDirectory' as const],
+        };
+        const result = win
+          ? await dialog.showOpenDialog(win, options)
+          : await dialog.showOpenDialog(options);
+        const picked = result.canceled ? null : result.filePaths[0];
+        return picked ? contractHome(picked) : null;
+      }),
+      /** A new repository's or clone's folder, checked while typing (spec §6.1). */
+      checkNewFolder: publicProcedure
+        .input(
+          z.object({
+            profileId: IdSchema,
+            parent: z.string().min(1).max(4096),
+            name: z.string().max(1000),
+          }),
+        )
+        .mutation(({ input }) =>
+          projects.checkNewFolder(input.profileId, input.parent, input.name),
+        ),
+      /** New repository (spec §6.1): makes it, then adds it. */
+      create: publicProcedure
+        .input(
+          z.object({
+            profileId: IdSchema,
+            parent: z.string().min(1).max(4096),
+            name: z.string().min(1).max(1000),
+            readme: z.boolean(),
+            gitignore: z.boolean(),
+            worktreeRoot: z.string().min(1).nullable(),
+          }),
+        )
+        .mutation(({ input }) => projects.create(input)),
+      /**
+       * Clone from URL (spec §6.1): `git clone` in a visible terminal with the
+       * profile's environment. The dialog adds the clone once it exits with 0.
+       */
+      clone: publicProcedure
+        .input(
+          z.object({
+            profileId: IdSchema,
+            url: z.string().trim().min(1).max(4096),
+            parent: z.string().min(1).max(4096),
+            name: z.string().min(1).max(1000),
+          }),
+        )
+        .mutation(async ({ input }) => {
+          const { target, problem } = await projects.checkNewFolder(
+            input.profileId,
+            input.parent,
+            input.name,
+          );
+          if (problem) throw new Error(problem);
+          const session = await terminals.cloneSession(input.profileId, input.url, target);
+          return { session, target };
+        }),
+      /** Adds a finished clone, with its remote's default branch as base. */
+      addClone: publicProcedure
+        .input(
+          z.object({
+            profileId: IdSchema,
+            path: z.string().min(1).max(4096),
+            worktreeRoot: z.string().min(1).nullable(),
+          }),
+        )
+        .mutation(({ input }) =>
+          projects.addClone(input.profileId, input.path, input.worktreeRoot),
+        ),
+      /** The repository's remotes, for Remote › Change… (spec §6.10). */
+      remotes: publicProcedure
+        .input(projectId)
+        .query(({ input }) => projects.remotes(input.projectId)),
+      setRemote: publicProcedure
+        .input(projectId.extend({ remote: z.string().min(1).max(250).nullable() }))
+        .mutation(({ input }) => projects.setRemote(input.projectId, input.remote)),
+      /** A project without a remote took `origin` (spec §6.10), for the notice. */
+      remoteFound: publicProcedure.subscription(({ signal }) =>
+        fromListener<RemoteFound>((listener) => remoteWatch.onFound(listener), signal),
+      ),
       /** Native folder picker for a project's worktree folder; null when cancelled. */
       pickWorktreeFolder: publicProcedure.mutation(async ({ ctx }) => {
         const win = windowOf(ctx.windowId);
