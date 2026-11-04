@@ -3,6 +3,7 @@ import type { ProfileColor } from '@shared/profile-colors';
 import type { Profile } from '@shared/schemas';
 import { accountFolder, setupPassed, setupWarning } from '@shared/setup';
 import { SOUND_EVENTS } from '@shared/status';
+import { resumePrompt } from '@shared/unfinished';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { GuideLink } from '../guide/link';
@@ -55,6 +56,8 @@ export function EditProfileDialog({
   const [color, setColor] = useState<ProfileColor>(profile.color);
   const [sounds, setSounds] = useState(profile.alerts.sounds);
   const [doNotDisturb, setDoNotDisturb] = useState(profile.alerts.doNotDisturb);
+  const [continueAtStart, setContinueAtStart] = useState(profile.resume.continueAtStart);
+  const [continuePrompt, setContinuePrompt] = useState(resumePrompt(profile.resume));
   const [statusLine, setStatusLine] = useState(profile.claude.statusLine ?? '');
   const [askBeforeLink, setAskBeforeLink] = useState(profile.claude.askBeforeLink);
   const [editor, setEditor] = useState<EditorDraft>(draftOf(profile.editor));
@@ -100,6 +103,7 @@ export function EditProfileDialog({
       askBeforeLink,
       git: commitName.trim() || commitEmail.trim() ? { commitName, commitEmail } : null,
       pr: { createCommand: prCreate, statusCommand: prStatus },
+      resume: { continueAtStart, prompt: continuePrompt },
     });
   };
 
@@ -300,6 +304,42 @@ export function EditProfileDialog({
               Do Not Disturb{' '}
               <span className="text-sm text-fg-subtle">no notifications or sounds</span>
             </label>
+          </div>
+          <div data-resume-settings>
+            <span className={labelClass}>When {BRAND.displayName} starts</span>
+            <label className="flex items-center gap-2 text-md">
+              <input
+                id="edit-profile-continue"
+                type="checkbox"
+                checked={continueAtStart}
+                onChange={(e) => setContinueAtStart(e.target.checked)}
+              />
+              Continue interrupted work when {BRAND.displayName} starts
+              <GuideLink
+                to="resume#continuing-it"
+                label="Continuing interrupted work"
+                before={onClose}
+              />
+            </label>
+            <label
+              className="mt-2 block text-sm text-fg-muted"
+              htmlFor="edit-profile-continue-prompt"
+            >
+              Continue prompt
+            </label>
+            <textarea
+              id="edit-profile-continue-prompt"
+              className={`${inputClass} h-auto min-h-14 py-1.5 text-sm`}
+              rows={3}
+              value={continuePrompt}
+              onChange={(e) => setContinuePrompt(e.target.value)}
+            />
+            <p className="mt-1 text-sm text-fg-subtle">
+              Sent to each workspace where Claude was working when {BRAND.displayName} stopped, a
+              few seconds apart and never while plan usage is at its limit. Work you interrupted
+              with Esc, and permission requests, are never continued by themselves. Off: you're
+              asked when {BRAND.displayName} starts.
+            </p>
           </div>
           <div>
             <span className={labelClass}>Editor</span>

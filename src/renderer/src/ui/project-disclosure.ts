@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { remember } from './remember';
 
 const KEY = 'sidebar-projects';
 
@@ -34,11 +35,7 @@ export function useProjectDisclosure() {
   const update = (change: (current: Disclosure) => Disclosure) =>
     setState((current) => {
       const next = change(current);
-      try {
-        localStorage.setItem(KEY, JSON.stringify(next));
-      } catch {
-        // remembered for this run only
-      }
+      remember(KEY, JSON.stringify(next));
       return next;
     });
 

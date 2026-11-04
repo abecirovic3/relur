@@ -10,6 +10,8 @@ export interface NavigatorState {
   current: number;
   /** Claude draws in the alternate screen: markers and buttons are hidden (D9). */
   alternate: boolean;
+  /** Markers, buttons and the navigator are hidden: the alternate screen, or a replay being drawn. */
+  hidden: boolean;
 }
 
 interface Mark {
@@ -38,7 +40,8 @@ const needle = (mark: TerminalMark): Needle | null =>
  * by the prompt's or response's text, when the hook arrives and again after
  * a resize (Claude Code reprints the conversation then); a response that
  * can't be found gets no button. Claude Code's own output is never touched.
- * In the alternate screen (full-screen renderer) none of it applies.
+ * In the alternate screen (full-screen renderer) none of it applies, and
+ * while a replay is drawn none of it shows (D9).
  */
 export class ConversationAids {
   private readonly marks: Mark[] = [];
@@ -49,6 +52,7 @@ export class ConversationAids {
     /** Search everything again, rather than only check the placed marks. */
     full: boolean;
   } | null = null;
+  private replaying = false;
 
   constructor(
     private readonly term: Terminal,
@@ -73,6 +77,28 @@ export class ConversationAids {
 
   get alternate(): boolean {
     return this.term.buffer.active.type === 'alternate';
+  }
+
+  /** Nothing shows in the alternate screen, nor while a replay is drawn (D9). */
+  get hidden(): boolean {
+    return this.replaying || this.alternate;
+  }
+
+  /**
+   * Around a replay (call in write order): its marks are placed as it is
+   * drawn, but shown only once all of it is, in the buffer it ends in.
+   */
+  replay(replaying: boolean): void {
+    this.replaying = replaying;
+    this.emit();
+  }
+
+  /** The terminal's element hides the decorations (theme.css) whenever the aids are hidden. */
+  private syncHidden(): void {
+    const element = this.term.element;
+    if (!element) return;
+    if (this.hidden) element.dataset.aidsHidden = 'true';
+    else delete element.dataset.aidsHidden;
   }
 
   private get cursorLine(): number {
@@ -305,8 +331,8 @@ export class ConversationAids {
 
   /** ⌘↑ / ⌘↓: the previous or next prompt. */
   step(delta: -1 | 1): void {
-    const { current, count } = this.state();
-    if (count === 0) return;
+    const { current, count, hidden } = this.state();
+    if (count === 0 || hidden) return;
     this.goTo(Math.min(count, Math.max(1, current + delta)));
   }
 
@@ -321,10 +347,12 @@ export class ConversationAids {
       count: prompts.length,
       current,
       alternate: this.alternate,
+      hidden: this.hidden,
     };
   }
 
   private emit(): void {
+    this.syncHidden();
     this.handlers.change(this.state());
   }
 

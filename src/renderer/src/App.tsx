@@ -30,6 +30,8 @@ import { SandboxWarning } from './components/SandboxWarning';
 import { SetupCheckPanel } from './components/SetupCheck';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
+import { ContinueNotice, UnfinishedDialog } from './components/UnfinishedDialog';
+import { UpdateNotice } from './components/UpdateNotice';
 import { FOCUS_CLAUDE_EVENT, WorkspaceView } from './components/WorkspaceView';
 import { type GuideTarget, GuideView, target } from './guide/GuideView';
 import { GuideContext } from './guide/link';
@@ -37,6 +39,7 @@ import { trpcClient, useTRPC } from './trpc';
 import { button, iconButton, isMac, Kbd } from './ui/controls';
 import { LaunchingContext } from './ui/launching';
 import { useProjectDisclosure } from './ui/project-disclosure';
+import { remember } from './ui/remember';
 import { playAlert } from './ui/sounds';
 import { useNativeTheme } from './ui/theme';
 import {
@@ -75,6 +78,14 @@ export function App() {
     }),
   );
   const workspaces = useQuery(trpc.workspaces.list.queryOptions());
+  // Continuing interrupted work (spec §9.7): the notice and the start's overview.
+  const unfinished = useQuery(trpc.unfinished.state.queryOptions());
+  useSubscription(
+    trpc.unfinished.changes.subscriptionOptions(undefined, {
+      onData: () =>
+        void queryClient.invalidateQueries({ queryKey: trpc.unfinished.state.queryKey() }),
+    }),
+  );
   const [selectedProfile, setSelectedProfile] = useState<string | null>(null);
   // What each profile shows, and the selected tab of each view (by profile and view key).
   const [views, setViews] = useState<Record<string, View>>({});
@@ -120,7 +131,7 @@ export function App() {
   // Messages from deeper down, such as an editor that didn't open (spec §6.13).
   useEffect(() => {
     const listener = (event: Event) =>
-      setAppNotice({ text: (event as CustomEvent<string>).detail });
+      setAppNotice((event as CustomEvent<{ text: string; info: boolean }>).detail);
     window.addEventListener(APP_NOTICE_EVENT, listener);
     return () => window.removeEventListener(APP_NOTICE_EVENT, listener);
   }, []);
@@ -207,6 +218,16 @@ export function App() {
     trpc.workspaces.changes.subscriptionOptions(undefined, {
       onData: () =>
         void queryClient.invalidateQueries({ queryKey: trpc.workspaces.list.queryKey() }),
+    }),
+  );
+  // A remote added to a project that had none (spec §6.10).
+  useSubscription(
+    trpc.projects.remoteFound.subscriptionOptions(undefined, {
+      onData: (found) =>
+        setAppNotice({
+          text: `${found.projectName} now uses the remote ${found.remote}: Push and Create PR are available`,
+          info: true,
+        }),
     }),
   );
   // Open as workspace for a worktree made outside the app (spec §13.6).
@@ -389,11 +410,7 @@ export function App() {
     if (!profileId) return;
     setOverlayCollapsed((current) => {
       const next = { ...current, [profileId]: !current[profileId] };
-      try {
-        localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next));
-      } catch {
-        // remembered for this run only
-      }
+      remember(COLLAPSED_KEY, JSON.stringify(next));
       return next;
     });
   };
@@ -685,6 +702,7 @@ export function App() {
           />
           {config.data?.error ? <ConfigError error={config.data.error} /> : null}
           <SandboxWarning />
+          <UpdateNotice />
           <div className="flex min-h-0 flex-1 overflow-hidden">
             {guide.open ? (
               <GuideView
@@ -720,6 +738,14 @@ export function App() {
                   />
                 ) : null}
                 <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-term">
+                  {unfinished.data?.run.running ? (
+                    <ContinueNotice
+                      run={unfinished.data.run}
+                      workspaces={workspaces.data ?? []}
+                      profiles={profiles}
+                      onStop={() => void trpcClient.unfinished.stop.mutate()}
+                    />
+                  ) : null}
                   {appNotice ? (
                     <div
                       role={appNotice.info ? 'status' : 'alert'}
@@ -927,6 +953,24 @@ export function App() {
               }}
             />
           ) : null}
+          {unfinished.data?.overview && workspaces.data && !quitting ? (
+            <UnfinishedDialog
+              workspaceIds={unfinished.data.overview}
+              workspaces={workspaces.data}
+              profiles={profiles}
+              projects={currentConfig?.projects ?? []}
+              usage={usage.data ?? {}}
+              onContinue={(workspaceIds) => {
+                void trpcClient.unfinished.closeOverview.mutate();
+                void trpcClient.unfinished.continue.mutate({ workspaceIds });
+              }}
+              onClose={() => void trpcClient.unfinished.closeOverview.mutate()}
+              onOpen={(w) => {
+                void trpcClient.unfinished.closeOverview.mutate();
+                openWorkspace(w);
+              }}
+            />
+          ) : null}
           {closeNotice ? (
             <CloseNotice
               onAnswer={(close) => {
@@ -948,6 +992,7 @@ export function App() {
           {addingProject && profile ? (
             <AddProjectDialog
               profile={profile}
+              projects={profileProjects}
               onClose={() => setAddingProject(false)}
               onAdded={(added) => {
                 setAddingProject(false);
@@ -961,13 +1006,22 @@ export function App() {
               projects={profileProjects}
               initialProject={newWorkspace.project}
               onClose={() => setNewWorkspace(null)}
-              onCreated={({ workspace: created, claude, claudeError, setup }) => {
+              onCreated={({ workspace: created, claude, claudeError, setup, notes }) => {
                 setNewWorkspace(null);
+                // A renamed branch, a local base, a task not found (spec §7.1, §7.3).
+                if (notes.length > 0) setAppNotice({ text: notes.join('\n'), info: true });
                 if (claudeError) setClaudeNotices((n) => ({ ...n, [created.id]: claudeError }));
-                // Setup first: its tab shows until Claude starts (spec §8.3).
-                if (setup) showSession(setup);
-                else if (claude) showSession(claude);
-                else openWorkspace(created);
+                // Setup first: its tab shows until Claude starts (spec §8.3). The
+                // view comes from the new workspace, which the list may not have yet,
+                // so a linked repository's Setup tab doesn't open that repository's project.
+                const session = setup ?? claude;
+                if (session) {
+                  showView(
+                    created.profileId,
+                    { kind: 'workspace', projectId: created.projectId, workspaceId: created.id },
+                    session.id,
+                  );
+                } else openWorkspace(created);
               }}
             />
           ) : null}

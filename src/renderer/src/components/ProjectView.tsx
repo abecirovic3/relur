@@ -8,7 +8,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
 import { GuideLink } from '../guide/link';
 import { trpcClient, useTRPC } from '../trpc';
-import { button, isMac, Kbd, keyHint } from '../ui/controls';
+import { button, inputClass, isMac, Kbd, keyHint } from '../ui/controls';
 import { useLaunching } from '../ui/launching';
 import { StatusGlyph } from '../ui/StatusGlyph';
 import { ago } from '../ui/time';
@@ -102,6 +102,15 @@ export function ProjectView({
       // Shown below from pickWorktrees.error.
     }
   };
+  // The project's remote (§6.10): Change… lists the repository's remotes, and None.
+  const [choosingRemote, setChoosingRemote] = useState(false);
+  const remotes = useQuery({
+    ...trpc.projects.remotes.queryOptions({ projectId: project.id }),
+    enabled: choosingRemote,
+  });
+  const setRemote = useMutation(
+    trpc.projects.setRemote.mutationOptions({ onSuccess: () => setChoosingRemote(false) }),
+  );
   const active = sessions.find((s) => s.id === tab) ?? null;
   const names = sessionTabNames(sessions);
   const error =
@@ -110,7 +119,9 @@ export function ProjectView({
       startClaude.error ??
       close.error ??
       pickWorktrees.error ??
-      setWorktreeRoot.error
+      setWorktreeRoot.error ??
+      remotes.error ??
+      setRemote.error
     )?.message ?? shortcutError;
 
   const details: [string, string][] = [
@@ -173,14 +184,56 @@ export function ProjectView({
         </div>
         <dl className="mt-4 flex flex-wrap gap-x-9 gap-y-2">
           {details.map(([label, value]) => (
-            <div key={label} className="min-w-0">
+            <div key={label} data-detail={label} className="min-w-0">
               <dt className="flex items-center gap-1.5 text-sm text-fg-muted">
                 {label}
                 {label === 'Worktrees' ? (
                   <GuideLink to="worktrees#a-folder-you-choose" label="Where worktrees go" />
                 ) : null}
               </dt>
-              <dd className="mt-0.5 truncate font-mono text-sm select-text">{value}</dd>
+              {label === 'Remote' && choosingRemote ? (
+                <dd className="mt-0.5">
+                  <select
+                    aria-label="Remote"
+                    // biome-ignore lint/a11y/noAutofocus: opened by Change…, which it replaces.
+                    autoFocus
+                    className={`${inputClass} h-6.5 font-mono text-sm`}
+                    value={project.remote ?? ''}
+                    disabled={!remotes.data}
+                    onChange={(e) =>
+                      setRemote.mutate({ projectId: project.id, remote: e.target.value || null })
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        e.stopPropagation();
+                        setChoosingRemote(false);
+                      }
+                    }}
+                    onBlur={() => setChoosingRemote(false)}
+                  >
+                    {(remotes.data ?? (project.remote ? [project.remote] : [])).map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                    <option value="">none</option>
+                  </select>
+                </dd>
+              ) : (
+                <dd className="mt-0.5 truncate font-mono text-sm select-text">{value}</dd>
+              )}
+              {label === 'Remote' && !choosingRemote ? (
+                <dd className="mt-0.5 flex gap-1">
+                  <button
+                    type="button"
+                    data-change-remote
+                    className={button('ghost', 'sm')}
+                    onClick={() => setChoosingRemote(true)}
+                  >
+                    Change…
+                  </button>
+                </dd>
+              ) : null}
               {label === 'Worktrees' ? (
                 <dd className="mt-0.5 flex gap-1">
                   <button

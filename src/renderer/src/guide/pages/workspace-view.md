@@ -1,6 +1,6 @@
 # The workspace view
 
-The header shows what the workspace is: the task id and title, `branch ← base`, the workspace's ports and, once known, its pull request. With a [workflow](workflows), it also shows the status stepper, the status's hint, and **Continue** at a step or the gate's buttons. The trash icon after the title opens [Delete workspace](delete-workspace), and **⋯** at the right has **Link another repository…**, **Unlink <repo>…** for each linked repository, and **Delete workspace…**.
+The header shows what the workspace is: the task id and title, `branch ← base`, the workspace's ports and, once known, its pull request. With a [workflow](workflows), it also shows the status stepper, the status's hint, and **Continue** at a step or the gate's buttons. After a change to the profile's skills it says **Skills changed since Claude started**, with **Restart Claude**; see [Skills](skills#when-sources-change). The trash icon after the title opens [Delete workspace](delete-workspace), and **⋯** at the right has **Link another repository…**, **Unlink <repo>…** for each linked repository, and **Delete workspace…**.
 
 A line separates the header from the tabs, whose bar holds the workspace's views at its right: **Responses** <kbd>{{key:responses}}</kbd> on a Claude tab ([Copying Claude's responses](copy-response)), **Open in editor** <kbd>{{key:openInEditor}}</kbd>, which opens the worktree in your [editor](open-in-editor), and **Changes** <kbd>{{key:changes}}</kbd>, which opens the [Changes panel](finishing-work). The number on **Changes** counts the changed files and updates within a second or two of a change in the workspace's folders, also one made in a shell or an editor. In a narrow window these show as icons; hover one for its name and shortcut. A workspace across several repositories shows its repositories as chips instead: the primary one with `branch ← base`, the linked ones by name on one line, with **+n more** when they don't fit. Hover a chip for its details, click it for Open in editor, New shell, {{reveal}}, Show in Changes and Unlink; see [Tasks across repositories](tasks-across-repositories#the-workspace-view).
 
@@ -22,6 +22,7 @@ A bar under the tabs says when something needs doing:
 - **Running setup. Claude starts when it finishes.** while setup runs.
 - When setup failed, the error with **Retry**, **Start Claude anyway** and **Delete…**; see [Setup for new workspaces](workspace-setup#when-setup-fails).
 - **Claude isn't running in this workspace.** with **Start Claude**, once Claude has exited or was never started.
+- **Claude didn't finish when {{app}} closed:** and why, with **Continue** and **Dismiss**, when the workspace is unfinished; see [The Unfinished marker](resume#the-unfinished-marker).
 - When the branch is merged, **Delete workspace?** with **Delete…**; see [Finishing work](finishing-work#the-pr-badge).
 
 ## Moving between workspaces

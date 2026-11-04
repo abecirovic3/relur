@@ -9,6 +9,7 @@ import {
 } from '@shared/profiles';
 import { type Profile, ProfileSchema, type Sounds } from '@shared/schemas';
 import { accountFolder } from '@shared/setup';
+import { DEFAULT_RESUME_PROMPT } from '@shared/unfinished';
 import type { ConfigStore } from '../config/store';
 import { buildProcessEnv } from '../env/build-env';
 import type { EnvService } from '../env/service';
@@ -128,6 +129,8 @@ export class ProfileService {
       git?: { commitName: string; commitEmail: string } | null;
       /** The PR commands (spec §12.3, §14.1); an empty one is removed. */
       pr?: { createCommand: string; statusCommand: string };
+      /** Continue interrupted work at start (spec §9.7); the default prompt isn't written. */
+      resume?: { continueAtStart: boolean; prompt: string };
     },
   ): Profile {
     const name = changes.name.trim();
@@ -163,9 +166,27 @@ export class ProfileService {
       pr !== undefined &&
       (pr.createCommand !== (current.pr?.createCommand ?? null) ||
         pr.statusCommand !== (current.pr?.statusCommand ?? null));
+    const resumePromptText = changes.resume?.prompt.trim();
+    const resume = changes.resume && {
+      continueAtStart: changes.resume.continueAtStart,
+      prompt:
+        resumePromptText && resumePromptText !== DEFAULT_RESUME_PROMPT ? resumePromptText : null,
+    };
+    const resumeChanged =
+      resume !== undefined &&
+      (resume.continueAtStart !== current.resume.continueAtStart ||
+        resume.prompt !== (current.resume.prompt ?? null));
     const config = this.config.update((raw) => {
       const entry = this.rawProfile(raw.profiles, profileId);
       entry.name = name;
+      if (resumeChanged && resume) {
+        // Off and the default prompt aren't written.
+        const fields: Record<string, unknown> = {};
+        if (resume.continueAtStart) fields.continueAtStart = true;
+        if (resume.prompt) fields.prompt = resume.prompt;
+        if (Object.keys(fields).length > 0) entry.resume = fields;
+        else delete entry.resume;
+      }
       if (prChanged && pr) {
         // Other pr fields (createPrompt, timeoutSec) are kept as they are.
         const fields = { ...(entry.pr as Record<string, unknown> | undefined) };

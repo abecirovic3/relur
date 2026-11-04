@@ -28,11 +28,12 @@ Tab from a project row reaches its **+**. <kbd>{{keys:workspaceStep}}</kbd> stil
 
 Each workspace shows its [status glyph](status-glyphs), its title (or name), a **+n** when it spans other repositories, and on the right:
 
-- while Claude works, how long it has been working;
-- otherwise, when it has a glyph, a short state in its color: **Permission**, **Input**, **Approve**, **Done**, **Exited** or **Error**; at a workflow gate, the gate's label instead of **Approve**;
+- while Claude works, how long it has been working, or **2 in background** while it waits for its background agents;
+- when it's done with commands still running, **1 running**, or **Done · 1 running** until you've opened it (see [Work in the background](status-glyphs#work-in-the-background));
+- otherwise, when it has a glyph, a short state in its color: **Permission**, **Input**, **Approve**, **Done**, **Exited**, **Error** or **Unfinished**; at a workflow gate, the gate's label instead of **Approve**;
 - with no glyph and a [workflow](workflows), the task's current status.
 
-Hover a row for its task id and title, its state in words (at a gate with the gate's name) and its branch.
+Hover a row for its task id and title, its state in words (at a gate with the gate's name) and its branch. For an **Unfinished** row it says why; see [The Unfinished marker](resume#the-unfinished-marker).
 
 ## Projects open and close by themselves
 

@@ -12,6 +12,7 @@ Right-click a profile tab and choose **Edit profile…**. It has four tabs: **Ge
 | Pull request commands | Optional **Create PR** and **PR status** commands; left empty, Claude opens pull requests and git tells when they're merged. See [PR commands](finishing-work#pr-commands) |
 | Sounds | A checkbox per event: Needs permission, Waiting for input, Awaiting approval, Done, Error. All off to begin with; ticking one plays it. See [Sounds](notifications#sounds) |
 | Alerts | **Do Not Disturb**: no notifications and no sounds for this profile |
+| When {{app}} starts | **Continue interrupted work when {{app}} starts**, off at first, and the continue prompt it sends. See [Continuing it](resume#continuing-it) |
 | Editor | The editor **Open in editor** uses for this profile's projects; a project can choose its own. See [Open in editor](open-in-editor) |
 | Linking repositories | **Ask before Claude links a repository**, on by default: Claude asks you before it runs `{{cli}} link`, even in auto mode. See [Tasks across repositories](tasks-across-repositories#when-claude-links-one-itself) |
 | Your status line command | Only if you customized Claude Code's status line. See [The status line](status-line) |

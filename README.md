@@ -6,16 +6,13 @@
 
 **Run many Claude Code sessions side by side, each in its own worktree,<br>and know exactly when one needs you.**
 
-[**Download for macOS**](https://github.com/dino-zecevic/relur/releases/latest) · [Install](#install) · [Quick start](#quick-start) · [FAQ](#faq)
+[**Download**](https://github.com/dino-zecevic/relur/releases/latest) · [Install](#install) · [Quick start](#quick-start) · [FAQ](#faq)
 
 [![Latest release](https://img.shields.io/github/v/release/dino-zecevic/relur?label=release)](https://github.com/dino-zecevic/relur/releases/latest)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-![macOS · Linux (beta)](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20(beta)-lightgrey)
+![macOS · Linux](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux-lightgrey)
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/workspace-working-dark.png">
-  <img src="docs/images/workspace-working-light.png" alt="Relur: projects and their workspaces in the sidebar, each with its status, and Claude Code working in the selected one">
-</picture>
+<img src="docs/images/demo.gif" width="1100" alt="Relur at work: Claude's output streams into a workspace; ⌘N creates a workspace for ABC-160 and Claude starts in its worktree; another workspace asks for permission and the Work tab's badge counts it; ⌘J jumps there, the permission is given and it works again; it turns Done and ⇧⌘D shows its diff">
 
 </div>
 
@@ -27,28 +24,31 @@ Claude Code is great at one task at a time. Run three, and you're juggling termi
 - **Know when Claude needs you.** Working, needs permission, waiting or done: in the sidebar, the Dock badge and a notification.
 - **Review and ship.** See the diff, then commit, push and open a pull request, without leaving the app.
 - **Work and personal, apart.** Profiles keep separate Claude accounts, settings and projects.
-- **The real Claude Code.** The official `claude`, unmodified, in a terminal you can see. Runs locally, no telemetry.
+- **The real Claude Code.** The official `claude`, unmodified, in a terminal you can see. Runs locally, no telemetry; the only request of its own is an opt-in daily check for new versions.
 
 ## Install
-
-macOS 13 or later, Apple Silicon or Intel:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dino-zecevic/relur/main/install.sh | sh
 ```
 
-Or download the app: [Apple Silicon](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-arm64.dmg) · [Intel](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-x64.dmg)
+One command for macOS and Linux: it picks your platform and chip, checks the download against the release's checksums, and never uses sudo.
+
+Or download the app directly:
+
+| Platform | Download |
+|---|---|
+| **macOS** 13 or later | [Apple Silicon](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-arm64.dmg) · [Intel](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-mac-x64.dmg) |
+| **Linux** x64 and arm64 | `.deb` [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.deb) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.deb) · AppImage [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.AppImage) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.AppImage) |
 
 You also need [Claude Code](https://code.claude.com) (Relur offers to install it), a Claude plan and git.
 
 <details>
-<summary><b>Linux (beta)</b></summary>
+<summary><b>Linux</b></summary>
 
 <br>
 
-The same command installs the AppImage on Linux (x64 and arm64, glibc 2.31 or later). Or download it directly: AppImage [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.AppImage) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.AppImage), or `.deb` [x64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-x64.deb) · [arm64](https://github.com/dino-zecevic/relur/releases/latest/download/Relur-linux-arm64.deb) for Debian and Ubuntu.
-
-Linux builds are tested in Docker, not yet on a real desktop. **On Ubuntu 23.10 and later, install the `.deb`:** it sets up Chromium's sandbox by itself. The AppImage works there too once listed for the sandbox; the install script prints the two commands. The AppImage needs `fuse3`. The app's Guide has a page on Linux.
+Linux builds need glibc 2.31 or later and are tested on Ubuntu 24.04 with GNOME, and in Docker. **On Ubuntu 23.10 and later, install the `.deb`:** it sets up Chromium's sandbox by itself. The AppImage works there too once listed for the sandbox; the install script prints the two commands. The AppImage needs `fuse3`. The app's Guide has a page on Linux.
 
 </details>
 
@@ -66,7 +66,7 @@ Relur is signed ad hoc, not with an Apple Developer ID. A `.dmg` downloaded with
 
 <br>
 
-To update, run the install command again. To uninstall, use `sh -s -- --uninstall` at its end. Your settings stay in `~/Library/Application Support/Relur` (Linux: `~/.config/relur`) until you delete them; Claude logins, repositories and worktrees are never touched.
+Relur can tell you when a new version is out: on its first start it asks whether to check GitHub once a day (**Check for Updates Automatically** in the app menu changes it later). **Update** in its notice opens your terminal with the install command, which asks before it quits Relur. To update by hand, run the install command again; for the `.deb`, install the new one with `apt`. To uninstall, use `sh -s -- --uninstall` at its end. Your settings stay in `~/Library/Application Support/Relur` (Linux: `~/.config/relur`) until you delete them; Claude logins, repositories and worktrees are never touched.
 
 </details>
 
@@ -92,6 +92,13 @@ The in-app **Guide** (⇧⌘/) explains everything else.
 <summary><b>Screenshots</b></summary>
 
 <br>
+
+**Know when Claude needs you:** every workspace with its status in the sidebar, Claude Code working in the selected one.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/workspace-working-dark.png">
+  <img src="docs/images/workspace-working-light.png" alt="Relur: projects and their workspaces in the sidebar, each with its status, and Claude Code working in the selected one">
+</picture>
 
 **Review and ship:** the diff against the base branch, then Commit, Push and Create PR.
 
@@ -132,7 +139,7 @@ It *is* `claude` in a terminal, unmodified. Relur adds what's around it: a workt
 
 <br>
 
-Not through Relur. It runs locally, with no telemetry, analytics or accounts, and stores no credentials. Your code reaches Anthropic the way it always does with Claude Code, and your git host when you push.
+Not through Relur. It runs locally, with no telemetry, analytics or accounts, and stores no credentials. Its only request of its own is the check for new versions, if you allow it: once a day it asks GitHub's API for Relur's latest release, without cookies or identifiers, sending nothing about you or your work. Your code reaches Anthropic the way it always does with Claude Code, and your git host when you push.
 
 </details>
 

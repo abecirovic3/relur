@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { GuideLink } from '../guide/link';
 import { trpcClient, useTRPC } from '../trpc';
 import { button, Kbd, keyHint } from '../ui/controls';
+import { showAppNotice } from './EditorPicker';
 import { Modal, ModalFooter } from './Modal';
 
 /** A command line with Copy ("Copied" for 1.5 s). */
@@ -75,6 +76,8 @@ export function LinkRepositoryDialog({
     trpc.workspaces.link.mutationOptions({
       onSuccess: (result) => {
         onLinked(result.setup ?? result.claude);
+        // A base from the local branch (spec §7.3).
+        if (result.notes.length > 0) showAppNotice(result.notes.join('\n'), true);
         if (restart) onClose();
         else setLinkedLine(result.addDirLine);
       },

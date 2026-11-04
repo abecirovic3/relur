@@ -17,7 +17,7 @@ Each response is a block with a header line: its number, the prompt it answers, 
 
 Drag the panel's left edge to make it wider or narrower, from 320 pixels up to 70% of the workspace. It keeps that width the next time you open it, also after restarting {{app}}.
 
-**Full view** in the panel's header gives it the whole workspace area, with the terminal hidden for the moment, which is easier for reading long answers. **Side panel**, <kbd>{{key:responsesFullView}}</kbd> or <kbd>Esc</kbd> puts it back beside the terminal.
+**Full view** in the panel's header, or <kbd>{{key:responsesFullView}}</kbd>, gives it the whole workspace area, with the terminal hidden for the moment, which is easier for reading long answers. **Side panel**, <kbd>{{key:responsesFullView}}</kbd> or <kbd>Esc</kbd> puts it back beside the terminal.
 
 <kbd>{{key:copyResponse}}</kbd> copies the last response without opening anything.
 

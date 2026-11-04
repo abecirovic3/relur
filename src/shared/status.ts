@@ -10,7 +10,11 @@ export type WorkspaceState =
   | 'exited'
   | 'error';
 
-/** The seven status glyphs of the design (components.md, Status glyph). */
+/**
+ * The status glyphs of the design (components.md, Status glyph): one per
+ * state, and Unfinished, a workspace's marker after the app's stop cut Claude
+ * off (spec §9.7).
+ */
 export type StatusGlyph =
   | 'working'
   | 'permission'
@@ -18,7 +22,8 @@ export type StatusGlyph =
   | 'approval'
   | 'done'
   | 'exited'
-  | 'error';
+  | 'error'
+  | 'unfinished';
 
 export const GLYPH_LABEL: Record<StatusGlyph, string> = {
   working: 'Working',
@@ -28,6 +33,7 @@ export const GLYPH_LABEL: Record<StatusGlyph, string> = {
   done: 'Done (unread)',
   exited: 'Exited',
   error: 'Error',
+  unfinished: 'Unfinished',
 };
 
 /** Each state in words, for the sidebar row's tooltip (spec §6.1). */
@@ -52,6 +58,7 @@ export const GLYPH_ROW_LABEL: Record<StatusGlyph, string> = {
   done: 'Done',
   exited: 'Exited',
   error: 'Error',
+  unfinished: 'Unfinished',
 };
 
 /**

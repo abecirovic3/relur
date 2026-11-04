@@ -118,6 +118,20 @@ export const SHORTCUTS = {
     label: 'Changes panel: full view or back',
     chords: [{ mod: true, shift: true, code: 'KeyM' }],
   },
+  changesFileStep: {
+    group: 'Workspaces',
+    label: 'Changes panel: previous / next file',
+    // ⌥⌘↑↓ in a read-only diff would only add cursors; Ctrl+Alt+arrows switch
+    // desktops on Linux, so Ctrl+Shift there (spec §6.4).
+    chords: [
+      { mod: true, alt: true, code: 'ArrowUp' },
+      { mod: true, alt: true, code: 'ArrowDown' },
+    ],
+    other: [
+      { ctrl: true, shift: true, code: 'ArrowUp' },
+      { ctrl: true, shift: true, code: 'ArrowDown' },
+    ],
+  },
   continueWorkflow: {
     group: 'Workspaces',
     label: 'Continue the workflow; at a gate, go to Claude',

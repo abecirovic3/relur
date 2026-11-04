@@ -11,6 +11,7 @@ import {
   TaskLookupSchema,
   WorkflowSchema,
 } from '@shared/schemas';
+import type { Release } from '@shared/updates';
 import { parseWorkflowFile, WORKFLOW_FILE, workflowFileText } from '@shared/workflow-file';
 import { workspaceRepo } from '@shared/workspaces';
 import { app, BrowserWindow, clipboard, dialog, nativeTheme, shell, webContents } from 'electron';
@@ -26,8 +27,9 @@ import type { UsageRecords } from '../db/usage';
 import type { WorkspaceRecords } from '../db/workspaces';
 import type { EditorService } from '../editor/service';
 import type { EnvService } from '../env/service';
-import type { MenuRequest } from '../menu';
+import type { MenuFeedback, MenuRequest } from '../menu';
 import { contractHome, expandHome } from '../paths';
+import type { RemoteFound, RemoteWatch } from '../projects/remote-watch';
 import { chromiumSandboxOff } from '../sandbox';
 import { openExternalSafe } from '../security';
 import type { CliLinkEvent, CliLinkService } from '../services/cli-link';
@@ -40,6 +42,10 @@ import type { SetupService } from '../setup/service';
 import type { SkillService } from '../skills/service';
 import type { ElectronStatusPlatform } from '../status/electron';
 import type { Alert, ConversationEvent, StatusService } from '../status/service';
+import type { UnfinishedService } from '../unfinished/service';
+import type { UpdateAction } from '../updates/install';
+import type { UpdateService } from '../updates/service';
+import { windowStateChanged } from '../window';
 import type { WorkflowSetupService } from '../workflow/propose';
 import type { WorkflowService } from '../workflow/service';
 import type { NewWorktree, WorktreeNotices } from '../worktrees/notices';
@@ -59,6 +65,7 @@ export interface Services {
   workflow: WorkflowService;
   workflowSetup: WorkflowSetupService;
   worktreeNotices: WorktreeNotices;
+  remoteWatch: RemoteWatch;
   finish: FinishService;
   editors: EditorService;
   setup: SetupService;
@@ -68,8 +75,14 @@ export interface Services {
   usage: UsageRecords;
   /** Menu items the renderer answers with a dialog. */
   menuRequests: EventEmitter;
+  /** Report a Bug… and Request a Feature… (spec §6.12), also from the Guide. */
+  feedback: MenuFeedback;
   /** The compiled helper, or null when it wasn't built. */
   helper: string | null;
+  /** Continuing interrupted work (spec §9.7). */
+  unfinished: UnfinishedService;
+  /** New versions (spec §15.7): the service, and Update for this installation. */
+  updates: { service: UpdateService; update: (release: Release) => Promise<UpdateAction> };
   /** The quit dialog: requests with busy session ids, and the user's answer. */
   quit: { asker: EventEmitter; answer: (quit: boolean) => void };
   /** The notice when the window first closes and the app keeps running (spec §5). */
@@ -93,6 +106,7 @@ export function createAppRouter({
   workflow,
   workflowSetup,
   worktreeNotices,
+  remoteWatch,
   finish,
   editors,
   setup,
@@ -101,9 +115,12 @@ export function createAppRouter({
   statusPlatform,
   usage,
   menuRequests,
+  feedback,
   helper,
   quit,
   closeNotice,
+  unfinished,
+  updates,
 }: Services) {
   const host = terminals.host;
   const sessionId = z.object({ sessionId: z.string().min(1) });
@@ -475,6 +492,9 @@ export function createAppRouter({
             pr: z
               .object({ createCommand: z.string().max(2000), statusCommand: z.string().max(2000) })
               .optional(),
+            resume: z
+              .object({ continueAtStart: z.boolean(), prompt: z.string().max(4000) })
+              .optional(),
           }),
         )
         .mutation(({ input }) => profiles.update(input.profileId, input)),
@@ -553,6 +573,90 @@ export function createAppRouter({
           }),
         )
         .mutation(({ input }) => projects.add(input)),
+      /** Native folder picker for a new repository's or clone's parent folder. */
+      pickParentFolder: publicProcedure.mutation(async ({ ctx }) => {
+        const win = windowOf(ctx.windowId);
+        const options = {
+          title: 'Choose the parent folder',
+          properties: ['openDirectory' as const, 'createDirectory' as const],
+        };
+        const result = win
+          ? await dialog.showOpenDialog(win, options)
+          : await dialog.showOpenDialog(options);
+        const picked = result.canceled ? null : result.filePaths[0];
+        return picked ? contractHome(picked) : null;
+      }),
+      /** A new repository's or clone's folder, checked while typing (spec §6.1). */
+      checkNewFolder: publicProcedure
+        .input(
+          z.object({
+            profileId: IdSchema,
+            parent: z.string().min(1).max(4096),
+            name: z.string().max(1000),
+          }),
+        )
+        .mutation(({ input }) =>
+          projects.checkNewFolder(input.profileId, input.parent, input.name),
+        ),
+      /** New repository (spec §6.1): makes it, then adds it. */
+      create: publicProcedure
+        .input(
+          z.object({
+            profileId: IdSchema,
+            parent: z.string().min(1).max(4096),
+            name: z.string().min(1).max(1000),
+            readme: z.boolean(),
+            gitignore: z.boolean(),
+            worktreeRoot: z.string().min(1).nullable(),
+          }),
+        )
+        .mutation(({ input }) => projects.create(input)),
+      /**
+       * Clone from URL (spec §6.1): `git clone` in a visible terminal with the
+       * profile's environment. The dialog adds the clone once it exits with 0.
+       */
+      clone: publicProcedure
+        .input(
+          z.object({
+            profileId: IdSchema,
+            url: z.string().trim().min(1).max(4096),
+            parent: z.string().min(1).max(4096),
+            name: z.string().min(1).max(1000),
+          }),
+        )
+        .mutation(async ({ input }) => {
+          const { target, problem } = await projects.checkNewFolder(
+            input.profileId,
+            input.parent,
+            input.name,
+          );
+          if (problem) throw new Error(problem);
+          const session = await terminals.cloneSession(input.profileId, input.url, target);
+          return { session, target };
+        }),
+      /** Adds a finished clone, with its remote's default branch as base. */
+      addClone: publicProcedure
+        .input(
+          z.object({
+            profileId: IdSchema,
+            path: z.string().min(1).max(4096),
+            worktreeRoot: z.string().min(1).nullable(),
+          }),
+        )
+        .mutation(({ input }) =>
+          projects.addClone(input.profileId, input.path, input.worktreeRoot),
+        ),
+      /** The repository's remotes, for Remote › Change… (spec §6.10). */
+      remotes: publicProcedure
+        .input(projectId)
+        .query(({ input }) => projects.remotes(input.projectId)),
+      setRemote: publicProcedure
+        .input(projectId.extend({ remote: z.string().min(1).max(250).nullable() }))
+        .mutation(({ input }) => projects.setRemote(input.projectId, input.remote)),
+      /** A project without a remote took `origin` (spec §6.10), for the notice. */
+      remoteFound: publicProcedure.subscription(({ signal }) =>
+        fromListener<RemoteFound>((listener) => remoteWatch.onFound(listener), signal),
+      ),
       /** Native folder picker for a project's worktree folder; null when cancelled. */
       pickWorktreeFolder: publicProcedure.mutation(async ({ ctx }) => {
         const win = windowOf(ctx.windowId);
@@ -660,8 +764,11 @@ export function createAppRouter({
       linkedFromCli: publicProcedure.subscription(({ signal }) =>
         fromListener<CliLinkEvent>((listener) => cliLink.onLinked(listener), signal),
       ),
-      /** Why a branch name can't be used, or null (local checks; Create also asks the remote). */
-      branchProblem: publicProcedure
+      /**
+       * Why a branch name can't be used, or null, and a name to use instead
+       * (local checks; Create also asks the remote).
+       */
+      branchCheck: publicProcedure
         .input(
           projectId.extend({
             branch: z.string(),
@@ -669,7 +776,7 @@ export function createAppRouter({
           }),
         )
         .query(({ input }) =>
-          workspaces.branchProblem(input.projectId, input.branch, input.linkedProjectIds),
+          workspaces.branchCheck(input.projectId, input.branch, input.linkedProjectIds),
         ),
       baseBranches: publicProcedure
         .input(projectId)
@@ -684,6 +791,8 @@ export function createAppRouter({
             runSetup: z.boolean().optional(),
             /** Other projects of the profile it also spans (spec §21.2). */
             linkedProjectIds: z.array(IdSchema).max(50).optional(),
+            /** The branch came from the task: a taken one gets the next free name (spec §7.1). */
+            uniqueBranch: z.boolean().optional(),
           }),
         )
         .mutation(({ input }) => workspaces.create(input)),
@@ -935,6 +1044,48 @@ export function createAppRouter({
       close: publicProcedure.input(sessionId).mutation(({ input }) => host.remove(input.sessionId)),
     }),
 
+    /** New versions (spec §15.7). */
+    updates: router({
+      /** The first-start question and the notice. */
+      state: publicProcedure.query(() => updates.service.state()),
+      changes: publicProcedure.subscription(({ signal }) =>
+        fromListener((listener) => updates.service.onChange(() => listener(true)), signal),
+      ),
+      /** Check for updates or No thanks. */
+      answer: publicProcedure
+        .input(z.object({ check: z.boolean() }))
+        .mutation(({ input }) => updates.service.answer(input.check)),
+      skip: publicProcedure.mutation(() => updates.service.skip()),
+      dismiss: publicProcedure.mutation(() => updates.service.dismiss()),
+      /** Opens the user's terminal with the install command, or says what to run. */
+      update: publicProcedure.mutation(() => {
+        const release = updates.service.state().available;
+        if (!release) throw new Error('There is no newer version to install');
+        return updates.update(release);
+      }),
+    }),
+
+    /** Work the app's stop interrupted (spec §9.7). */
+    unfinished: router({
+      /** The run of continue prompts (the notice) and the start's overview. */
+      state: publicProcedure.query(() => unfinished.state()),
+      changes: publicProcedure.subscription(({ signal }) =>
+        fromListener((listener) => unfinished.onChange(() => listener(true)), signal),
+      ),
+      /** Continue selected, and the bar's Continue: one after another, a few seconds apart. */
+      continue: publicProcedure
+        .input(z.object({ workspaceIds: z.array(z.string().min(1).max(100)).max(500) }))
+        .mutation(({ input }) => unfinished.continue(input.workspaceIds)),
+      /** Stop in the notice: the prompts not yet sent are cancelled. */
+      stop: publicProcedure.mutation(() => unfinished.stop()),
+      /** Dismiss in the bar: the marker goes. */
+      dismiss: publicProcedure
+        .input(workspaceId)
+        .mutation(({ input }) => unfinished.dismiss(input.workspaceId)),
+      /** The overview was answered; it isn't shown again in this run. */
+      closeOverview: publicProcedure.mutation(() => unfinished.closeOverview()),
+    }),
+
     /** Workspace states and their alerts (spec §10). */
     status: router({
       /** Alerts as they happen; the renderer plays their sounds (spec §10.3). */
@@ -1045,6 +1196,8 @@ export function createAppRouter({
           }),
         )
         .mutation(({ input, ctx }) => showContextMenu(windowOf(ctx.windowId), input.items)),
+      /** The window changed a remembered preference in its local storage (spec §5). */
+      remembered: publicProcedure.mutation(() => windowStateChanged()),
     }),
 
     /** The renderer has no clipboard permission; terminals copy and paste through here. */
@@ -1060,6 +1213,9 @@ export function createAppRouter({
       openExternal: publicProcedure
         .input(z.object({ url: z.string() }))
         .mutation(({ input }) => openExternalSafe(input.url)),
+      /** The issue forms in the browser (spec §6.12); nothing is sent. */
+      reportBug: publicProcedure.mutation(() => feedback.reportBug()),
+      requestFeature: publicProcedure.mutation(() => feedback.requestFeature()),
     }),
   });
 }

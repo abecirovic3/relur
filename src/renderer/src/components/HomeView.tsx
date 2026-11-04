@@ -1,6 +1,7 @@
 import type { Profile, Project } from '@shared/schemas';
 import { GLYPH_LABEL, glyphFor, needsYou } from '@shared/status';
 import type { SessionInfo } from '@shared/terminal-protocol';
+import { unfinishedTooltip, workspaceGlyph } from '@shared/unfinished';
 import type { Workspace } from '@shared/workspaces';
 import { useMutation } from '@tanstack/react-query';
 import { type ReactNode, useEffect } from 'react';
@@ -64,10 +65,11 @@ export function HomeView({
 
   const configDir = profile.env.CLAUDE_CONFIG_DIR;
   const error = (homeShell.error ?? restart.error)?.message ?? startClaude.error;
-  // Oldest first (components.md, Home overlay).
+  // Oldest first (components.md, Home overlay); Unfinished ones too (spec §9.7).
+  const since = (w: Workspace) => (needsYou(w.state) ? w.stateSince : w.unfinished?.since) ?? '';
   const needs = workspaces
-    .filter((w) => needsYou(w.state))
-    .sort((a, b) => (a.stateSince ?? '').localeCompare(b.stateSince ?? ''));
+    .filter((w) => needsYou(w.state) || w.unfinished)
+    .sort((a, b) => since(a).localeCompare(since(b)));
   const mode = projects.length === 0 ? 'empty' : needs.length > 0 ? 'needs' : 'calm';
 
   return (
@@ -145,7 +147,11 @@ export function HomeView({
             <>
               <div className="border-b border-line p-1">
                 {needs.map((w) => (
-                  <OverlayRow key={w.id} onClick={() => onOpenWorkspace(w)}>
+                  <OverlayRow
+                    key={w.id}
+                    unfinished={!needsYou(w.state)}
+                    onClick={() => onOpenWorkspace(w)}
+                  >
                     <WorkspaceGlyph workspace={w} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline gap-1.5">
@@ -154,13 +160,23 @@ export function HomeView({
                         ) : null}
                         <span className="truncate">{w.task.title || w.name}</span>
                       </span>
-                      <span className={`block truncate text-sm ${STATE_TEXT[w.state] ?? ''}`}>
-                        {w.stateMessage ?? GLYPH_LABEL[glyphFor(w.state) ?? 'working']} ·{' '}
-                        {projects.find((p) => p.id === w.projectId)?.name}
-                      </span>
+                      {needsYou(w.state) ? (
+                        <span className={`block truncate text-sm ${STATE_TEXT[w.state] ?? ''}`}>
+                          {w.stateMessage ?? GLYPH_LABEL[glyphFor(w.state) ?? 'working']} ·{' '}
+                          {projects.find((p) => p.id === w.projectId)?.name}
+                        </span>
+                      ) : (
+                        <span className="block truncate text-sm text-st-input">
+                          {unfinishedTooltip(w.unfinished)} ·{' '}
+                          {projects.find((p) => p.id === w.projectId)?.name}
+                        </span>
+                      )}
                     </span>
                     <span className="font-mono text-xs text-fg-subtle">
-                      {ago(w.stateSince ?? w.lastActivityAt)}
+                      {ago(
+                        (needsYou(w.state) ? w.stateSince : w.unfinished?.since) ??
+                          w.lastActivityAt,
+                      )}
                     </span>
                   </OverlayRow>
                 ))}
@@ -295,16 +311,26 @@ function CountBadge({ count }: { count: number }) {
 
 function WorkspaceGlyph({ workspace }: { workspace: Workspace }) {
   const launching = useLaunching();
-  const glyph = glyphFor(workspace.state, workspace.unread, launching.has(workspace.id));
+  const glyph = workspaceGlyph(workspace, launching.has(workspace.id));
   return glyph ? <StatusGlyph glyph={glyph} /> : <span className="size-3 flex-none" />;
 }
 
 const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
-function OverlayRow({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+function OverlayRow({
+  onClick,
+  unfinished,
+  children,
+}: {
+  onClick: () => void;
+  /** An Unfinished workspace's row (spec §9.7). */
+  unfinished?: boolean;
+  children: ReactNode;
+}) {
   return (
     <button
       type="button"
+      data-needs-unfinished={unfinished || undefined}
       tabIndex={-1}
       onMouseDown={keepFocus}
       onClick={onClick}

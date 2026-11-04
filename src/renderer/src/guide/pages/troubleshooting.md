@@ -5,7 +5,7 @@
 That happens when the app was downloaded with a browser: {{app}} isn't notarized by Apple, and macOS checks that for browser downloads. Open **System Settings › Privacy & Security**, click **Open Anyway** next to the message about {{app}}, and confirm; macOS asks only once. The install script and builds from source don't need this.
 {{/mac}}{{other}}## Linux: the app doesn't start, keys or badges
 
-See [{{app}} on Linux](linux): FUSE for the AppImage, the sandbox on Ubuntu 24.04, keys an input method takes, Wayland, and the Changes count.
+See [{{app}} on Linux](linux): FUSE for the AppImage, the sandbox on Ubuntu 23.10 and later (and the **Running without Chromium's sandbox** bar), keys an input method takes, Wayland, and the Changes count.
 {{/other}}
 ## "claude not found" after installing
 
@@ -36,6 +36,14 @@ Choose **Yes, I trust this folder**; the default answer is **No, exit**. Trust t
 
 Usage comes from Claude's status line, so it updates while Claude runs and answers. See [Plan usage](plan-usage).
 
+## Workspaces marked Unfinished after a restart
+
+{{app}} stopped Claude there while it worked, or stopped the commands it had left running. Open the workspace and choose **Continue** or **Dismiss** in the bar under the tabs. See [Work that was cut off](resume#work-that-was-cut-off).
+
+## Couldn't check for updates
+
+**Check for Updates…** says why, for example when GitHub can't be reached. The daily check stays quiet when it fails and tries again later. See [Updates and privacy](updates).
+
 ## Setup can't find a folder
 
 Each setup line runs on its own. Write `cd app && npm install` on one line. See [Setup for new workspaces](workspace-setup#setup-and-teardown-commands).
@@ -57,3 +65,12 @@ Profiles, projects and their settings are kept in `config.json`. Most of it has 
 {{app}} was called {{oldApp}} before. Installing {{app}} quits and removes {{oldApp}}, after asking, and replaces its `{{oldCli}}` command with `{{cli}}`; run the installer from Terminal, not from a terminal inside {{oldApp}}. Its first start copies {{oldApp}}'s settings folder (profiles, projects, workspaces, skill sources and the window's preferences) and says once where the old folder is: it stays as it was, as a backup, and you can delete it once everything works. If {{oldApp}} is still running, {{app}} asks you to quit it first and copies on its next start. macOS asks again whether {{app}} may send notifications, as it's a new app to macOS.
 
 Workspaces made by {{oldApp}} stay where they are, in `~/{{oldHomeDir}}/worktrees` with their task file in `{{oldRepoDir}}/task.md`: git records a worktree's full path, so moving them would break them. Their Claude conversations, terminals and editors carry on. New workspaces go to `~/{{homeDir}}/worktrees`, with `{{repoDir}}/task.md`.
+
+## Report a bug or request a feature
+
+Something not listed here, or something missing? **Help › Report a Bug…** and **Help › Request a Feature…** open the form on GitHub in your browser; so do these links:
+
+- [Report a Bug…](app:report-bug): the form comes filled in with {{app}}'s version, your operating system and its version, and the Claude Code version from the [setup check](setup-check).
+- [Request a Feature…](app:request-feature)
+
+Nothing is sent: you see the whole form in your browser, can change anything, and decide whether to submit it.

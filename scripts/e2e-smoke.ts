@@ -40,6 +40,7 @@ import {
   pressKey,
   pressShortcut,
   type RunningApp,
+  reloadPage,
   screenshot,
   sleep,
   submitDialog,
@@ -543,13 +544,7 @@ exec sleep 600
     await page.waitFor(`${tabCount} === 2`, 'a second project shell');
 
     // Reloading the window re-attaches to the running shells.
-    await page.send('Page.reload');
-    await sleep(500);
-    await page.waitFor(
-      `!!document.querySelector('[data-app-ready]')`,
-      'the UI after reload',
-      30_000,
-    );
+    await reloadPage(page);
     await clickProject(page, 'api-service');
     await page.waitFor(`${tabCount} === 2`, 'both project shells after reload');
     await page.eval(
@@ -1497,8 +1492,9 @@ exec sleep 600
       `document.querySelector('h1')?.textContent === 'api-service'`,
       'the project',
     );
+    const worktreesDetail = `document.querySelector('[data-detail=Worktrees]')`;
     await answerFolderPanel(path.join(repo, 'src'));
-    await clickButtonText(page, 'Change…');
+    await clickButtonText(page, 'Change…', worktreesDetail);
     await page.waitFor(
       `document.body.innerText.includes("can't go inside the repository's main checkout")`,
       'the refusal',
@@ -1506,7 +1502,7 @@ exec sleep 600
     const elsewhere = path.join(fx.root, 'trees-elsewhere');
     fs.mkdirSync(elsewhere);
     await answerFolderPanel(elsewhere);
-    await clickButtonText(page, 'Change…');
+    await clickButtonText(page, 'Change…', worktreesDetail);
     await page.waitFor(hasButton('Use default'), 'the own worktree folder');
     assert.equal(projects()[0].worktreeRoot, '~/trees-elsewhere');
     // The chosen folder is a parent: worktrees go in its hidden .worktrees/<project>.
@@ -1956,6 +1952,151 @@ exec sleep 600
     await page.waitFor(
       `document.querySelector('[data-changes-panel]').dataset.full === 'false'`,
       'the side panel from the button',
+    );
+
+    // The file list (spec §6.4): as tall as its files, up to about five rows.
+    const list = `document.querySelector('[data-changes-list]')`;
+    const listBox = `(() => { const l = ${list}; const r = l.getBoundingClientRect(); return { mode: l.dataset.changesList, height: Math.round(r.height), width: Math.round(r.width), left: Math.round(r.left), right: Math.round(r.right), scrolls: l.scrollHeight > l.clientHeight + 1 }; })()`;
+    type ListBox = {
+      mode: string;
+      height: number;
+      width: number;
+      left: number;
+      right: number;
+      scrolls: boolean;
+    };
+    let box = await page.eval<ListBox>(listBox);
+    assert.equal(box.mode, 'auto');
+    assert.equal(box.scrolls, false, 'two files fit');
+    const fewHeight = box.height;
+    assert.ok(fewHeight < 120, `two files: ${fewHeight}px`);
+    const extra = Array.from({ length: 12 }, (_, i) => `extra-${String(i).padStart(2, '0')}.txt`);
+    for (const file of extra) fs.writeFileSync(path.join(shopTree, file), `${file}\n`);
+    await page.waitFor(
+      `document.querySelectorAll('[data-changes-list] [data-change-file]').length === 14`,
+      'fourteen files',
+      10_000,
+    );
+    box = await page.eval<ListBox>(listBox);
+    assert.equal(box.scrolls, true, 'many files scroll');
+    assert.ok(box.height > fewHeight && box.height <= 170, `many files: ${box.height}px`);
+    const autoHeight = box.height;
+    // Dragging the divider down gives the list more; double-click resets it.
+    const dragBy = async (selector: string, dx: number, dy: number) => {
+      const at = await page.eval<{ x: number; y: number }>(
+        `(() => { const r = document.querySelector('${selector}').getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()`,
+      );
+      const mouse = (type: string, x: number, y: number) =>
+        page.send('Input.dispatchMouseEvent', {
+          type,
+          x,
+          y,
+          button: 'left',
+          buttons: type === 'mouseReleased' ? 0 : 1,
+          clickCount: 1,
+        });
+      await mouse('mousePressed', at.x, at.y);
+      await mouse('mouseMoved', at.x + dx / 2, at.y + dy / 2);
+      await mouse('mouseMoved', at.x + dx, at.y + dy);
+      await mouse('mouseReleased', at.x + dx, at.y + dy);
+    };
+    await dragBy('[data-changes-list-resize]', 0, 80);
+    await page.waitFor(
+      `${list}.dataset.changesList === 'sized' && Math.round(${list}.getBoundingClientRect().height) === ${autoHeight + 80}`,
+      'the dragged height',
+    );
+    // Saved on release, which may come after the last move.
+    await page.waitFor(
+      `localStorage.getItem('changes-list-height') === '${autoHeight + 80}'`,
+      'the dragged height saved',
+    );
+    await page.eval(
+      `document.querySelector('[data-changes-list-resize]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`,
+    );
+    await page.waitFor(`${list}.dataset.changesList === 'auto'`, 'the default height again');
+    assert.equal(await page.eval(`localStorage.getItem('changes-list-height')`), null);
+    await dragBy('[data-changes-list-resize]', 0, 60);
+    await page.waitFor(`${list}.dataset.changesList === 'sized'`, 'dragged again');
+    await page.waitFor(
+      `localStorage.getItem('changes-list-height') === '${autoHeight + 60}'`,
+      'dragged again, saved',
+    );
+    // Clicking a group's header collapses the list to one line: the current
+    // file with previous and next, and the keys from inside the diff.
+    const order = await page.eval<string[]>(
+      `[...document.querySelectorAll('[data-changes-list] [data-change-file]')].map((f) => f.dataset.changeFile)`,
+    );
+    const [firstFile, secondFile] = order as [string, string];
+    await page.eval(
+      `document.querySelector('[data-change-file=${JSON.stringify(firstFile)}]').click()`,
+    );
+    await page.eval(`document.querySelector('[data-changes-list-toggle]').click()`);
+    await page.waitFor(
+      `!!document.querySelector('[data-changes-list-collapsed]') && !document.querySelector('[data-changes-list]')`,
+      'the collapsed list',
+    );
+    const currentFile = `document.querySelector('[data-changes-current]')?.textContent`;
+    assert.equal(await page.eval(currentFile), firstFile);
+    assert.equal(await page.eval(`localStorage.getItem('changes-list-collapsed')`), '1');
+    assert.match(
+      await page.eval<string>(
+        `document.querySelector('[data-changes-list-collapsed]').textContent`,
+      ),
+      /1\/14/,
+    );
+    assert.equal(
+      await page.eval(`document.querySelector('[data-changes-prev]').disabled`),
+      true,
+      'no file before the first',
+    );
+    await page.eval(`document.querySelector('[data-changes-next]').click()`);
+    await page.waitFor(`${currentFile} === ${JSON.stringify(secondFile)}`, 'the next file');
+    await page.eval(`document.querySelector('[data-changes-prev]').click()`);
+    await page.waitFor(`${currentFile} === ${JSON.stringify(firstFile)}`, 'the previous file');
+    const monacoInput = `document.querySelector('[data-diff-editor] .modified textarea, [data-diff-editor] .modified .native-edit-context')`;
+    await page.waitFor(`!!${monacoInput}`, 'the diff', 20_000);
+    await page.eval(`${monacoInput}.focus()`);
+    await pressShortcut(page, 'changesFileStep', 1);
+    await page.waitFor(`${currentFile} === ${JSON.stringify(secondFile)}`, 'the next file by key');
+    await pressShortcut(page, 'changesFileStep', 0);
+    await page.waitFor(
+      `${currentFile} === ${JSON.stringify(firstFile)}`,
+      'the previous file by key',
+    );
+    // Full view: the list in a column on the left, its width dragged and kept.
+    await pressShortcut(page, 'changesFullView');
+    await page.waitFor(
+      `document.querySelector('[data-changes-panel]').dataset.full === 'true'`,
+      'full view',
+    );
+    // Still collapsed there: the line above the diff; open the column.
+    await page.eval(`document.querySelector('[data-changes-list-toggle]').click()`);
+    await page.waitFor(`${list}?.dataset.changesList === 'column'`, 'the column');
+    box = await page.eval<ListBox>(listBox);
+    const diffLeft = await page.eval<number>(
+      `Math.round(document.querySelector('[data-diff-area]').getBoundingClientRect().left)`,
+    );
+    assert.equal(box.width, 280, 'the default column width');
+    assert.ok(box.right <= diffLeft, 'the diff right of the list');
+    await dragBy('[data-changes-column-resize]', 60, 0);
+    await page.waitFor(
+      `Math.round(${list}.getBoundingClientRect().width) === 340`,
+      'the dragged column',
+    );
+    await page.waitFor(
+      `localStorage.getItem('changes-list-width') === '340'`,
+      'the dragged column saved',
+    );
+    await pressKey(page, 'Escape');
+    await page.waitFor(
+      `document.querySelector('[data-changes-panel]').dataset.full === 'false' && ${list}?.dataset.changesList === 'sized'`,
+      'back beside the terminal, as dragged',
+    );
+    for (const file of extra) fs.rmSync(path.join(shopTree, file));
+    await page.waitFor(
+      `document.querySelectorAll('[data-changes-list] [data-change-file]').length === 2`,
+      'the two files again',
+      10_000,
     );
     const message = `document.querySelector('[aria-label="Commit message"]').value`;
     assert.equal(await page.eval(message), 'PROJ-7: Add cart');
@@ -2446,11 +2587,12 @@ exec sleep 600
     await page.eval(`document.querySelector('dialog[open] [data-edit-tab=lookup]').click()`);
     await page.waitFor(`!!document.querySelector('[data-lookup-editor]')`, 'the Task lookup tab');
     // A task lookup (spec §13.7): a scratch command that knows FAKE-1 (after a
-    // second, so "Looking up" shows) and fails for anything else.
+    // second, so "Looking up" shows), finds nothing for FAKE-404 and fails for
+    // anything else.
     const lookupScript = path.join(fx.root, 'bin', 'fake-lookup');
     fs.writeFileSync(
       lookupScript,
-      `#!/bin/sh\ncase "$1" in\n  FAKE-1) sleep 1; echo "Fix the fake login" ;;\n  *) echo "no task $1" >&2; exit 3 ;;\nesac\n`,
+      `#!/bin/sh\ncase "$1" in\n  FAKE-1) sleep 1; echo "Fix the fake login" ;;\n  FAKE-404) ;;\n  *) echo "no task $1" >&2; exit 3 ;;\nesac\n`,
       { mode: 0o755 },
     );
     // Ask Claude: the profile's own model unless one is named, ToolSearch with
@@ -3002,10 +3144,14 @@ exec sleep 600
     assert.equal(fs.existsSync(apiTree), false);
     assert.equal(fs.existsSync(webTree), false);
 
-    // A task id alone is looked up (spec §13.7). A failure keeps the dialog
-    // open and creates nothing; a found title creates the workspace with the
-    // branch from it and the profile's Start prompt; no id, no Start prompt.
+    // A task id alone is looked up (spec §13.7). A failed lookup shows why and
+    // creates nothing until Create anyway (↵), which names the branch after
+    // what was typed; a found title creates the workspace with the branch from
+    // it and the profile's Start prompt; no id, no Start prompt; an id the
+    // lookup doesn't know is created right away, with a note.
     const runs = () => fs.readdirSync(fx.root).filter((f) => f.startsWith('claude-run-')).length;
+    const submitLabel = `document.querySelector('dialog[open] button[type=submit]')?.textContent`;
+    const appNotice = `(document.querySelector('[data-app-notice]')?.textContent ?? '')`;
     await clickLabel(page, 'New workspace in shop');
     await page.waitFor(`!!document.querySelector('dialog[open] #ws-task')`, 'the dialog');
     await typeInField(page, '#ws-task', 'FAKE-2', false);
@@ -3015,7 +3161,23 @@ exec sleep 600
       `document.querySelector('dialog[open] [data-lookup-error]')?.textContent.includes("Couldn't look up FAKE-2: The lookup failed (exit 3): no task FAKE-2")`,
       'the lookup failure',
     );
-    assert.equal(fx.git(shop, 'branch', '--list', 'FAKE-2*').trim(), '', 'nothing created');
+    assert.match(await page.eval<string>(submitLabel), /^Create anyway/);
+    assert.equal(fx.git(shop, 'branch', '--list', 'FAKE-2*').trim(), '', 'nothing created yet');
+    await screenshot(page, screenshotDir, '14g-lookup-failed.png');
+    const runsBeforeAnyway = runs();
+    await submitDialog(page);
+    await page.waitFor(
+      `!document.querySelector('dialog[open]') && document.querySelector('h1')?.textContent === 'FAKE-2'`,
+      'the workspace created anyway',
+      30_000,
+    );
+    assert.equal(
+      fx.git(shop, 'branch', '--list', '--format=%(refname:short)', 'FAKE-2').trim(),
+      'FAKE-2',
+    );
+    await claudeRun(runsBeforeAnyway);
+    await clickLabel(page, 'New workspace in shop');
+    await page.waitFor(`!!document.querySelector('dialog[open] #ws-task')`, 'the dialog');
     await typeInField(page, '#ws-task', 'FAKE-1', false);
     await sleep(600);
     const runsBefore = runs();
@@ -3048,6 +3210,27 @@ exec sleep 600
       /^Plan /m,
       'no Start prompt without an id',
     );
+    await clickLabel(page, 'New workspace in shop');
+    await page.waitFor(`!!document.querySelector('dialog[open] #ws-task')`, 'the dialog');
+    await typeInField(page, '#ws-task', 'FAKE-404', false);
+    await sleep(600);
+    await submitDialog(page);
+    await page.waitFor(
+      `!document.querySelector('dialog[open]') && document.querySelector('h1')?.textContent === 'FAKE-404'`,
+      'the workspace for an id the lookup does not know',
+      30_000,
+    );
+    assert.ok(
+      (await page.eval<string>(appNotice)).includes(
+        "FAKE-404 wasn't found; the branch is named after what you typed",
+      ),
+      'the note',
+    );
+    assert.equal(
+      fx.git(shop, 'branch', '--list', '--format=%(refname:short)', 'FAKE-404').trim(),
+      'FAKE-404',
+    );
+    await claudeRun(runsBefore + 2);
 
     // Many linked repositories (spec §21.4): the primary chip in full, the
     // linked ones by name on one line, the rest under "+n more"; a tooltip
@@ -3549,6 +3732,17 @@ exec sleep 600
         'the last workspace shown',
       );
       assert.equal(await checks.expanded(), expected, 'after a restart');
+      // Claude was working when the app quit: the overview asks once (spec §9.7); Not now.
+      const asked = await running.page
+        .waitFor(`!!document.querySelector('[data-unfinished-overview]')`, 'the overview', 15_000)
+        .then(
+          () => true,
+          () => false,
+        );
+      if (asked) {
+        await pressKey(running.page, 'Escape');
+        await running.page.waitFor(`!document.querySelector('dialog[open]')`, 'Not now');
+      }
       return { running, checks };
     };
     const quit = async (running: RunningApp) => {
@@ -3578,6 +3772,29 @@ exec sleep 600
       'split',
       'the diff style after a restart',
     );
+    // The file list's dragged height and Full view width lasted too.
+    const restartedList = `document.querySelector('[data-changes-list]')`;
+    await afterRestart.running.page.waitFor(
+      `${restartedList}?.dataset.changesList === 'sized' && Math.round(${restartedList}.getBoundingClientRect().height) === Number(localStorage.getItem('changes-list-height'))`,
+      'the list height after a restart',
+    );
+    await pressShortcut(afterRestart.running.page, 'changesFullView');
+    await afterRestart.running.page.waitFor(
+      `document.querySelector('[data-changes-panel]').dataset.full === 'true'`,
+      'full view after a restart',
+    );
+    await afterRestart.running.page.waitFor(
+      `Math.round(${restartedList}?.getBoundingClientRect().width) === 340`,
+      'the column width after a restart',
+    );
+    await pressKey(afterRestart.running.page, 'Escape');
+    await afterRestart.running.page.waitFor(
+      `document.querySelector('[data-changes-panel]').dataset.full === 'false'`,
+      'the side panel',
+    );
+    // This workspace has no changes, so no group header to click (the click
+    // was checked above): collapsed as the click stores it, for the next restart.
+    await afterRestart.running.page.eval(`localStorage.setItem('changes-list-collapsed', '1')`);
     await afterRestart.running.page.eval(`document.querySelector('[data-changes-toggle]').click()`);
     await afterRestart.running.page.waitFor(
       `!document.querySelector('[data-changes-panel]')`,
@@ -3591,7 +3808,18 @@ exec sleep 600
     // Local storage reaches the disk shortly after a change.
     await sleep(1500);
     await quit(afterRestart.running);
-    await quit((await restart('cartweb,shop')).running);
+    const again = (await restart('cartweb,shop')).running;
+    // Collapsed after a restart too.
+    await again.page.eval(
+      `document.querySelector('[data-project="cartweb"] ~ button[title^="PROJ-10 Linked web"]').click()`,
+    );
+    await again.page.waitFor(`!!document.querySelector('[data-changes-toggle]')`, 'the workspace');
+    await again.page.eval(`document.querySelector('[data-changes-toggle]').click()`);
+    await again.page.waitFor(
+      `!!document.querySelector('[data-changes-list-collapsed]')`,
+      'the list collapsed after a restart',
+    );
+    await quit(again);
     console.log(`e2e smoke test passed (${devMode ? 'dev server' : 'production build'})`);
   } catch (error) {
     if (app) {
@@ -3600,6 +3828,19 @@ exec sleep 600
         .eval<string>(`document.querySelector('#root')?.innerHTML.slice(0, 400) ?? 'no #root'`)
         .catch((e) => `unreadable: ${e}`);
       console.error(`#root: ${root}`);
+      // An open dialog's text and fields, and where the focus is: what a step waited on.
+      const dialog = await app.page
+        .eval<string>(`(() => {
+          const d = document.querySelector('dialog[open]');
+          const active = document.activeElement;
+          const focus = active ? active.tagName + (active.id ? '#' + active.id : '') : 'none';
+          if (!d) return 'no open dialog; focus: ' + focus;
+          const fields = [...d.querySelectorAll('input, textarea, select')]
+            .map((f) => (f.id || f.name || f.type) + '=' + JSON.stringify(f.value)).join(' ');
+          return d.innerText.replace(/\\s+/g, ' ').slice(0, 600) + '\\n  fields: ' + fields + '\\n  focus: ' + focus;
+        })()`)
+        .catch((e) => `unreadable: ${e}`);
+      console.error(`dialog: ${dialog}`);
       if (app.page.log.length > 0)
         console.error(`console:\n  ${app.page.log.slice(-15).join('\n  ')}`);
       if (app.page.errors.length > 0) {

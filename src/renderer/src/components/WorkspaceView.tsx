@@ -2,6 +2,13 @@ import type { Profile, Project } from '@shared/schemas';
 import { matchShortcut } from '@shared/shortcuts';
 import { glyphFor } from '@shared/status';
 import type { SessionInfo } from '@shared/terminal-protocol';
+import {
+  canContinue,
+  planLimitReached,
+  stoppedNote,
+  UNFINISHED_TOOLTIP,
+  type Unfinished,
+} from '@shared/unfinished';
 import { documentLabel, effectiveWorkflow } from '@shared/workflow';
 import {
   linkedRepos,
@@ -628,6 +635,13 @@ export function WorkspaceView({
           </button>
         </div>
       ) : null}
+      {workspace.unfinished ? (
+        <UnfinishedBar
+          workspaceId={workspace.id}
+          profileId={workspace.profileId}
+          unfinished={workspace.unfinished}
+        />
+      ) : null}
       {failed ? (
         <div
           role="alert"
@@ -779,6 +793,70 @@ export function WorkspaceView({
           onDone={() => setUnlinking(null)}
         />
       ) : null}
+    </div>
+  );
+}
+
+/** The bar's text after "Claude didn't finish when … closed:" (spec §9.7). */
+function unfinishedBarText({ kind, stopped }: Unfinished): string {
+  switch (kind) {
+    case 'working':
+      return 'it was working.';
+    case 'interrupted':
+      return 'you had interrupted it with Esc.';
+    case 'permission':
+      return 'it was asking for permission. Give it again in the Claude tab.';
+    case 'commands':
+      return `${stoppedNote(stopped)}.`;
+  }
+}
+
+/**
+ * The Unfinished marker's bar (spec §9.7): Continue sends the profile's
+ * continue prompt (never while plan usage is at its limit), Dismiss drops
+ * the marker. A permission can't be continued, only given again.
+ */
+function UnfinishedBar({
+  workspaceId,
+  profileId,
+  unfinished,
+}: {
+  workspaceId: string;
+  profileId: string;
+  unfinished: Unfinished;
+}) {
+  const { kind } = unfinished;
+  const trpc = useTRPC();
+  const usage = useQuery(trpc.usage.all.queryOptions());
+  const limit = planLimitReached(usage.data?.[profileId]);
+  const proceed = useMutation(trpc.unfinished.continue.mutationOptions());
+  const dismiss = useMutation(trpc.unfinished.dismiss.mutationOptions());
+  return (
+    <div
+      data-unfinished-bar={kind}
+      className="flex items-center gap-2 border-b border-line bg-surface px-4 py-2 text-md"
+    >
+      <span className="min-w-0 flex-1 truncate text-fg-muted">
+        {UNFINISHED_TOOLTIP}: {unfinishedBarText(unfinished)}
+      </span>
+      {canContinue(kind) ? (
+        <button
+          type="button"
+          className={button('secondary', 'sm')}
+          disabled={!!limit || proceed.isPending}
+          title={limit ?? 'Sends the continue prompt from Edit profile'}
+          onClick={() => proceed.mutate({ workspaceIds: [workspaceId] })}
+        >
+          Continue
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className={button('ghost', 'sm')}
+        onClick={() => dismiss.mutate({ workspaceId })}
+      >
+        Dismiss
+      </button>
     </div>
   );
 }

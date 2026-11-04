@@ -13,7 +13,13 @@ Pick a file to see its diff, read-only. **Unified** and **Side by side** above t
 
 Drag the panel's left edge to make it wider or narrower; double-click the edge for the default width. The width stays after a restart. **Full view** in the panel's header, or <kbd>{{key:changesFullView}}</kbd>, gives it the whole workspace area, with the terminal hidden for the moment; **Side panel**, <kbd>{{key:changesFullView}}</kbd> or <kbd>Esc</kbd> puts it back.
 
-To change a file, open it in your editor: **Open** on a file's row opens it at its first change; **Open in editor** above the diff opens it at the line you clicked in the diff, or at the first change. It uses the editor of the file's project. See [Open in editor](open-in-editor).
+### More room for the diff
+
+The file list is as tall as its files, up to about five rows, and scrolls beyond that, so the diff gets the rest of the panel. Drag the line between the list and the diff to make the list taller or shorter; double-click it to go back to the default. Click the list's header, such as **Uncommitted · 3**, to collapse the list to one line: it then shows the file you're looking at, with **‹** and **›** for the previous and next file. Click the line to bring the list back. With the focus in the diff, <kbd>{{keys:changesFileStep}}</kbd> go to the previous and next file, collapsed or not.
+
+In Full view the list is a column on the left and the diff fills the right; drag the line between them to change the column's width. The list's height, the column's width and whether the list is collapsed all stay after a restart.
+
+To change a file, open it in your editor: **Open**, on a file's row when you hover or focus it, opens it at its first change; **Open in editor** above the diff opens it at the line you clicked in the diff, or at the first change. It uses the editor of the file's project. See [Open in editor](open-in-editor).
 
 ## Commit, Push, Create PR
 
@@ -23,7 +29,7 @@ The panel's bottom shows one step at a time:
 2. **Push**, while there are unpushed commits: **Push n commits to <remote>** sends the branch to the remote. If git has no credentials for the remote, you get an explanation instead of a password prompt: set up a credential helper, an SSH key or a CLI login like `gh auth login`, and push once from a Shell tab.
 3. **Create PR**, once the branch is pushed and no pull request is known: **Create PR** runs your [PR create command](#pr-commands); without one, **Create PR with Claude** asks Claude in the Claude tab to open the pull request.
 
-Then the panel shows the PR badge. Projects without a remote show only Commit.
+Then the panel shows the PR badge. Projects without a remote show only Commit, with a note on adding one: `git remote add origin <url>` in a Shell tab, which {{app}} picks up by itself. See [A new repository](add-project#a-new-repository).
 
 A workspace across several repositories has a section per repository, each with its own commit message, **Ask Claude to write it** (for that repository only), **Commit → Push → Create PR** row and PR badge; see [Tasks across repositories](tasks-across-repositories#finishing).
 

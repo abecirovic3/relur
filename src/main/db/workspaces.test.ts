@@ -1,5 +1,5 @@
 import type { Workspace } from '@shared/workspaces';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { openStateDb } from './state-db';
 import { WorkspaceRecords } from './workspaces';
 
@@ -16,6 +16,8 @@ const workspace = (id: string, projectId = 'api'): Workspace => ({
   unread: false,
   stateMessage: null,
   background: 0,
+  unfinished: null,
+  lastPrompt: null,
   stateSince: null,
   claudeSessionId: null,
   ports: null,
@@ -36,6 +38,20 @@ const workspace = (id: string, projectId = 'api'): Workspace => ({
 });
 
 describe('WorkspaceRecords', () => {
+  it('logs and does nothing once state.db is closed, instead of throwing', () => {
+    const db = openStateDb(':memory:');
+    const records = new WorkspaceRecords(db);
+    records.insert(workspace('a'));
+    db.close();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(records.get('a')).toBeNull();
+    expect(records.list()).toEqual([]);
+    expect(() => records.setState('a', 'working')).not.toThrow();
+    expect(() => records.insert(workspace('b'))).not.toThrow();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('lists, finds and archives workspaces', () => {
     const records = new WorkspaceRecords(openStateDb(':memory:'));
     records.insert(workspace('a'));

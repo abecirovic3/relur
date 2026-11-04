@@ -157,6 +157,11 @@ export class StatusService {
     // Background work handing back to Claude isn't a prompt: no marker (spec §6.8).
     const handBack =
       message.event === 'UserPromptSubmit' && isBackgroundHandBack(str(payload.prompt));
+    // A prompt is the last prompt and ends the Unfinished marker (spec §9.7).
+    if (message.event === 'UserPromptSubmit' && !handBack) {
+      this.records.promptSent(workspace.id, str(payload.prompt));
+    }
+    if (message.event === 'SessionStart') this.events.emit('sessionStart', workspace.id);
     if ((message.event === 'UserPromptSubmit' && !handBack) || message.event === 'Stop') {
       this.events.emit('conversation', {
         workspaceId: workspace.id,
@@ -254,6 +259,12 @@ export class StatusService {
   onAlert(listener: (alert: Alert) => void): () => void {
     this.events.on('alert', listener);
     return () => this.events.off('alert', listener);
+  }
+
+  /** A workspace's Claude has started or resumed its session (the SessionStart hook). */
+  onSessionStart(listener: (workspaceId: string) => void): () => void {
+    this.events.on('sessionStart', listener);
+    return () => this.events.off('sessionStart', listener);
   }
 
   onConversation(listener: (event: ConversationEvent) => void): () => void {

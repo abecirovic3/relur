@@ -77,6 +77,24 @@ describe('SessionHost', () => {
     expect(() => host.spawn(sh('true'))).toThrow(/Quitting/);
   });
 
+  it('once closed, takes no input, tells no listener, closes the views and attaches none', async () => {
+    const host = new SessionHost({ batchMs: 5, killTimeoutMs: 600 });
+    const session = host.spawn(sh('sleep 5', { kind: 'claude', workspaceId: 'w1' }));
+    const view = recorder();
+    const attachment = host.attach(session.id, view.sink);
+    const inputs: string[] = [];
+    host.onInput((_info, data) => inputs.push(data));
+    attachment.input('a');
+    expect(inputs).toEqual(['a']);
+    host.close();
+    expect(view.closed).toBe(true);
+    // Keys still on their way from a window that is going away (spec §5).
+    attachment.input('\r');
+    expect(inputs).toEqual(['a']);
+    expect(() => host.attach(session.id, recorder().sink)).toThrow(/Quitting/);
+    await host.shutdown();
+  });
+
   it('keeps marks at their place in the output and sends them with the replay', async () => {
     const host = new SessionHost({ batchMs: 5 });
     const session = host.spawn(sh('printf one; read x; printf two; read y'));
@@ -154,6 +172,26 @@ describe('SessionHost', () => {
     host.attach(session.id, late.sink);
     expect(late.messages).toEqual([{ type: 'replay', data: 'first' }]);
     expect(early.output()).toBe('first');
+    await host.stop(session.id);
+  });
+
+  it('replays in the alternate screen when its switch was trimmed off (spec §6.8, D9)', async () => {
+    const host = new SessionHost({ scrollbackSize: 200 });
+    const session = host.spawn(
+      sh(
+        "printf 'shell\\n\\033[?1049hdrawn\\n'; i=0; while [ $i -lt 40 ]; do echo full-screen line; i=$((i+1)); done; sleep 30",
+      ),
+    );
+    await until(() => host.scrollback(session.id).endsWith('full-screen line\r\n'), 'output');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(host.scrollback(session.id)).not.toContain('1049');
+    host.mark(session.id, { kind: 'prompt', text: 'p' });
+    const view = recorder();
+    host.attach(session.id, view.sink);
+    const replay = view.messages[0] as { data: string; marks: { at: number }[] };
+    expect(replay.data.startsWith('\x1b[?1049h')).toBe(true);
+    // The mark stays at the end of the output, after the switch.
+    expect(replay.marks[0]?.at).toBe(replay.data.length);
     await host.stop(session.id);
   });
 

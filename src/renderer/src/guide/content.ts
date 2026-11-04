@@ -16,6 +16,8 @@
  *   {{linuxExe}}                                          the executable and desktop entry name on Linux
  *   {{mac}}…{{/mac}}  {{other}}…{{/other}}                text for macOS only, or for Linux and Windows
  *
+ * A link to one of `GUIDE_ACTIONS` (`app:…`) runs that action.
+ *
  * The Keyboard shortcuts page has `{{shortcuts}}`, generated from the same
  * definitions.
  */
@@ -31,11 +33,20 @@ import {
 import { WORKFLOW_FILE } from '@shared/workflow-file';
 import { type Block, type ParsedPage, parsePage, plainText } from './markdown';
 
+/**
+ * Links that do something instead of opening a page: `[Report a Bug…](app:report-bug)`
+ * opens the issue form in the browser, as the Help menu's item does (spec §6.12).
+ */
+export const GUIDE_ACTIONS = ['app:report-bug', 'app:request-feature'] as const;
+export type GuideAction = (typeof GUIDE_ACTIONS)[number];
+export const isGuideAction = (href: string): href is GuideAction =>
+  (GUIDE_ACTIONS as readonly string[]).includes(href);
+
 /** Sections and their pages, in table-of-contents order. */
 export const SECTIONS: { title: string; pages: string[] }[] = [
   {
     title: 'Getting started',
-    pages: ['what-it-is', 'building-blocks', 'first-steps', 'team-setup', 'linux'],
+    pages: ['what-it-is', 'building-blocks', 'first-steps', 'team-setup', 'linux', 'updates'],
   },
   {
     title: 'Profiles and accounts',

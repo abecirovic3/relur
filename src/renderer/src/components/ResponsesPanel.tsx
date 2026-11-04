@@ -14,6 +14,7 @@ import {
 import type { ConversationAids } from '../terminal/conversation';
 import { trpcClient, useTRPC } from '../trpc';
 import { button, iconButton, keyHint } from '../ui/controls';
+import { remember } from '../ui/remember';
 import { renderDocument, withImages } from './SpecView';
 
 /** Puts the Claude terminal in focus, as Esc in the Changes panel does. */
@@ -39,11 +40,7 @@ function savedWidth(): number | null {
 }
 
 function saveWidth(width: number): void {
-  try {
-    localStorage.setItem(WIDTH_KEY, String(Math.round(width)));
-  } catch {
-    // Not kept; the panel still works.
-  }
+  remember(WIDTH_KEY, String(Math.round(width)));
 }
 
 /**

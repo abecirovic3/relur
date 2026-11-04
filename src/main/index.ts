@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { BRAND, envVar } from '@shared/brand';
+import { planLimitReached } from '@shared/unfinished';
+import { LATEST_RELEASE_URL } from '@shared/updates';
 import { parseRateLimits } from '@shared/usage';
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, dialog, powerMonitor, shell } from 'electron';
 import { HookBridge } from './bridge/server';
 import { FinishService, PR_POLL_MS } from './changes/finish';
 import { claudeSettings, writeClaudeSettings } from './claude/settings';
@@ -16,6 +18,7 @@ import { UsageRecords } from './db/usage';
 import { WorkspaceRecords } from './db/workspaces';
 import { EditorService } from './editor/service';
 import { EnvService } from './env/service';
+import { bugReportUrl, featureRequestUrl, osOption, osVersion } from './feedback';
 import { helperPath, stableHelper, writeSessionBin } from './helper-files';
 import {
   migrateSettings,
@@ -26,8 +29,9 @@ import {
 import { installAppMenu } from './menu';
 import { markShown, wasShown } from './notices';
 import { appConfigDir, contractHome } from './paths';
+import { RemoteWatch } from './projects/remote-watch';
 import { chromiumSandboxOff } from './sandbox';
-import { installSecurityPolicies } from './security';
+import { installSecurityPolicies, openExternalSafe } from './security';
 import { isSelfTest, runSelfTest } from './self-test';
 import { CliLinkService } from './services/cli-link';
 import { ProfileService } from './services/profiles';
@@ -40,13 +44,25 @@ import { SkillService } from './skills/service';
 import { ElectronStatusPlatform } from './status/electron';
 import { StatusService } from './status/service';
 import { serveTrpcOverIpc } from './trpc/electron';
-import { createMainWindow, devIconPath } from './window';
+import { UnfinishedService } from './unfinished/service';
+import { startUpdate } from './updates/install';
+import { skippedStore, UpdateService } from './updates/service';
+import {
+  bringForward,
+  createMainWindow,
+  devIconPath,
+  saveWindowState,
+  testWindows,
+} from './window';
 import { TaskLookupService } from './workflow/lookup';
 import { WorkflowSetupService } from './workflow/propose';
 import { WorkflowService } from './workflow/service';
 import { WorktreeNotices } from './worktrees/notices';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** The workspaces whose Claude these sessions are. */
+const claudeWorkspaces = (sessions: { kind: string; workspaceId: string | null }[]) =>
+  sessions.flatMap((s) => (s.kind === 'claude' && s.workspaceId ? [s.workspaceId] : []));
 
 // Name and paths must be set before `ready`, so Electron's defaults (derived from
 // package.json) are never used.
@@ -71,6 +87,9 @@ if (migration.kind === 'old-app-running') {
 app.setPath('userData', configDir);
 app.setPath('sessionData', path.join(configDir, 'session'));
 if (process.platform === 'win32') app.setAppUserModelId(BRAND.bundleId);
+// Scripted test runs: no Dock icon, and never the active app, so no key or
+// menu shortcut of someone using the machine reaches it (window.ts).
+if (testWindows() && process.platform === 'darwin') app.setActivationPolicy('accessory');
 
 let mainWindow: BrowserWindow | null = null;
 let env: EnvService;
@@ -81,20 +100,36 @@ const shutdownTasks: (() => void)[] = [];
 const atShutdown = (task: () => void) => {
   shutdownTasks.push(task);
 };
+/** Closes state.db: the very last step, once nothing that uses it runs (spec §5). */
+let closeDatabase: (() => void) | null = null;
+/**
+ * Once quitting goes ahead (spec §5): no session starts, no terminal input,
+ * hook event, status line or command arrives any more, and the terminal
+ * views' ports close. Terminal output and exits already stopped reaching
+ * the views with host.close().
+ */
+const stopAccepting = () => {
+  host.close();
+  bridge.close();
+};
 // The one will-quit handler. A terminal still running here would end while
 // Electron tears Node down, where node-pty's exit callback aborts the app
 // ("quit unexpectedly"): it is stopped first and the quit goes on after.
 app.on('will-quit', (event) => {
-  host.close();
+  stopAccepting();
   if (host.runningCount() > 0) {
     event.preventDefault();
     void host.shutdown().then(() => app.quit());
     return;
   }
   for (const task of shutdownTasks.splice(0)) task();
+  closeDatabase?.();
+  closeDatabase = null;
 });
 const bridge = new HookBridge();
 let status: StatusService | null = null;
+/** Work the app's stop interrupts (spec §9.7); set once the app is ready. */
+let unfinished: UnfinishedService | null = null;
 let statusPlatform: ElectronStatusPlatform | null = null;
 /** The quit dialog in the window (spec §5): asked with the busy session ids. */
 const quitAsker = new EventEmitter();
@@ -152,8 +187,7 @@ async function selfTestCheck(): Promise<string | null> {
 
 function showMainWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+    bringForward(mainWindow);
     return;
   }
   const win = createMainWindow();
@@ -193,6 +227,52 @@ function onWindowClose(win: BrowserWindow, event: Electron.Event): void {
     answerCloseNotice = null;
     if (close && !win.isDestroyed()) win.close();
   });
+}
+
+/**
+ * The latest release from the GitHub API (spec §15.7): no cookies or
+ * identifiers, only a User-Agent with the app's name and version. Tests point
+ * it at a fake endpoint with <PREFIX>UPDATE_URL.
+ */
+async function fetchLatestRelease(version: string): Promise<unknown> {
+  const override = process.env[envVar('UPDATE_URL')];
+  const url = override && /^https?:\/\//.test(override) ? override : LATEST_RELEASE_URL;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        'User-Agent': `${BRAND.displayName}/${version}`,
+        Accept: 'application/vnd.github+json',
+      },
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    const code = (error as { cause?: { code?: string } }).cause?.code;
+    throw new Error(`GitHub couldn't be reached${code ? ` (${code})` : ''}`);
+  }
+  if (response.status === 404) throw new Error('GitHub has no release yet');
+  if (!response.ok) throw new Error(`GitHub answered ${response.status} ${response.statusText}`);
+  return response.json();
+}
+
+/** Check for Updates… (spec §15.7): the notice when there is a newer version, else a message. */
+async function checkForUpdatesNow(updates: UpdateService): Promise<void> {
+  const result = await updates.check({ manual: true });
+  showMainWindow();
+  if (result.kind === 'newer') return;
+  const options = {
+    type: result.kind === 'failed' ? ('warning' as const) : ('info' as const),
+    message:
+      result.kind === 'failed'
+        ? "Couldn't check for updates"
+        : `${BRAND.displayName} ${app.getVersion()} is the latest version`,
+    detail: result.kind === 'failed' ? result.reason : undefined,
+    buttons: ['OK'],
+  };
+  if (mainWindow) await dialog.showMessageBox(mainWindow, options);
+  else await dialog.showMessageBox(options);
 }
 
 /** Once, after the settings were copied: where the old folder still is (spec §3.5). */
@@ -252,15 +332,67 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     appConfig = config;
     appDataDir = dataDir;
     const db = openStateDb(path.join(dataDir, 'state.db'));
-    atShutdown(() => db.close());
+    closeDatabase = () => db.close();
     env = new EnvService(config);
 
     installSecurityPolicies();
-    const menuRequests = new EventEmitter();
-    installAppMenu(config, (what) => {
-      showMainWindow();
-      menuRequests.emit('request', what);
+    // New versions (spec §15.7): only after the user agreed, and never in the self-test.
+    const skipped = skippedStore(dataDir);
+    const updates = new UpdateService({
+      version: app.getVersion(),
+      fetchLatest: () => fetchLatestRelease(app.getVersion()),
+      automatic: () => (isSelfTest ? false : config.get().config?.checkForUpdates),
+      setAutomatic: (on) =>
+        config.update((raw) => {
+          raw.checkForUpdates = on;
+        }),
+      skipped: skipped.get,
+      setSkipped: skipped.set,
     });
+    atShutdown(() => updates.dispose());
+    const menuRequests = new EventEmitter();
+    // Report a Bug… and Request a Feature… (spec §6.12): the issue forms in the
+    // browser, the bug report prefilled; nothing is sent.
+    const feedback = {
+      reportBug: () => {
+        let osRelease: string | null = null;
+        try {
+          if (process.platform === 'linux') osRelease = fs.readFileSync('/etc/os-release', 'utf8');
+        } catch {}
+        openExternalSafe(
+          bugReportUrl({
+            appVersion: app.getVersion(),
+            os: osOption({
+              platform: process.platform,
+              arch: process.arch,
+              packaged: app.isPackaged,
+              appImage: Boolean(process.env.APPIMAGE),
+            }),
+            osVersion: osVersion({
+              platform: process.platform,
+              systemVersion: process.getSystemVersion(),
+              osRelease,
+              env: process.env,
+            }),
+            // The setup check starts below, before any menu item can be chosen.
+            claudeVersion: setup.claudeVersion(),
+          }),
+        );
+      },
+      requestFeature: () => openExternalSafe(featureRequestUrl()),
+    };
+    installAppMenu(
+      config,
+      (what) => {
+        showMainWindow();
+        menuRequests.emit('request', what);
+      },
+      {
+        setAutomatic: (on) => updates.setAutomatic(on),
+        checkNow: () => void checkForUpdatesNow(updates),
+      },
+      feedback,
+    );
     const workspaceRecords = new WorkspaceRecords(db);
     // Workspace states from hooks (spec §10), their alerts and the Dock badge.
     statusPlatform = new ElectronStatusPlatform(config);
@@ -351,6 +483,29 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       status?.workflowChanged(workspaceId, before, after),
     );
     workspaces.startPrompt = (workspace) => workflow.startPrompt(workspace);
+    // Continuing interrupted work (spec §9.7).
+    const runningClaude = (workspaceId: string) =>
+      host
+        .list()
+        .some(
+          (s) => s.workspaceId === workspaceId && s.kind === 'claude' && s.status === 'running',
+        );
+    const continuing = new UnfinishedService({
+      records: workspaceRecords,
+      settings: (profileId) =>
+        config.get().config?.profiles.find((p) => p.id === profileId)?.resume ?? null,
+      profileOrder: () => config.get().config?.profiles.map((p) => p.id) ?? [],
+      limit: (profileId) => planLimitReached(usage.all()[profileId]),
+      claudeRunning: runningClaude,
+      startClaude: (workspaceId) => workspaces.startClaude(workspaceId),
+      send: (workspaceId, prompt) => terminals.sendToClaude(workspaceId, prompt),
+      onSpawn: (listener) =>
+        host.onSpawn((info) => {
+          if (info.kind === 'claude' && info.workspaceId) listener(info.workspaceId);
+        }),
+      onSessionStart: (listener) => status?.onSessionStart(listener) ?? (() => {}),
+    });
+    unfinished = continuing;
     workspaces.adoptPrefill = (projectId, worktree, branch) =>
       workflow.prefill(projectId, worktree, branch);
     // Worktrees made outside the app, by a skill or by hand (spec §13.6).
@@ -358,6 +513,11 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     void worktreeNotices.start();
     app.on('browser-window-focus', () => worktreeNotices.focused());
     atShutdown(() => worktreeNotices.dispose());
+    // A remote added to a project that had none (spec §6.10).
+    const remoteWatch = new RemoteWatch(config, projects);
+    remoteWatch.start();
+    app.on('browser-window-focus', () => remoteWatch.focused());
+    atShutdown(() => remoteWatch.dispose());
     app.on('browser-window-focus', () => workflow.refreshAll());
     atShutdown(() => {
       workflow.dispose();
@@ -395,11 +555,26 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       finish,
       editors,
       quit: { asker: quitAsker, answer: (quit: boolean) => answerQuit?.(quit) },
+      unfinished: continuing,
+      updates: {
+        service: updates,
+        // The terminal gets the user's login environment, not the app's (AppImage paths included).
+        update: async (release) =>
+          startUpdate(release, {
+            platform: process.platform,
+            arch: process.arch,
+            appImage: Boolean(process.env.APPIMAGE),
+            packaged: app.isPackaged,
+            env: (await env.login()).env,
+            terminal: process.env[envVar('UPDATE_TERMINAL')],
+          }),
+      },
       closeNotice: {
         asker: closeNoticeAsker,
         answer: (close: boolean) => answerCloseNotice?.(close),
       },
       menuRequests,
+      feedback,
       helper,
       usage,
       status,
@@ -418,10 +593,14 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       workflow,
       workflowSetup,
       worktreeNotices,
+      remoteWatch,
     });
     showMainWindow();
     showMigrationNotice(dataDir);
-    void workspaces.resumeAtLaunch();
+    updates.start();
+    // Claude resumes where it ran (spec §9.4); then interrupted work is
+    // continued or asked about (§9.7).
+    void continuing.atLaunch(workspaces.resumeAtLaunch());
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) showMainWindow();
     });
@@ -433,22 +612,30 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
   // quits completely.
   let stopped = false;
   let asking = false;
-  // A SIGTERM (logout, a test runner) quits without asking: nobody is there to answer.
+  // A SIGTERM (logout, a test runner) or SIGHUP (the end of the desktop
+  // session) quits without asking: nobody is there to answer. The window's
+  // remembered preferences go to disk first, before anything else: at logout
+  // every process of the app is signalled at once, and the app may not get far.
   let askBeforeQuit = true;
+  const quitBySignal = () => {
+    saveWindowState();
+    askBeforeQuit = false;
+    app.quit();
+  };
   // Chromium installs its own SIGTERM handler during startup, which quits like
   // ⌘Q (and so asks); this one replaces it once the app is ready.
   app.whenReady().then(() => {
     process.removeAllListeners('SIGTERM');
-    process.on('SIGTERM', () => {
-      askBeforeQuit = false;
-      app.quit();
-    });
+    process.on('SIGTERM', quitBySignal);
+    process.removeAllListeners('SIGHUP');
+    process.on('SIGHUP', quitBySignal);
+    powerMonitor.on('shutdown', saveWindowState);
   });
   app.on('before-quit', (event) => {
     if (stopped || host.runningCount() === 0) {
       quitting = true;
       // Nothing cancels the quit from here: no session may start (spec §5).
-      host.close();
+      stopAccepting();
       return;
     }
     event.preventDefault();
@@ -463,7 +650,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       if (busy > 0 && askBeforeQuit && quitAsker.listenerCount('request') > 0 && mainWindow) {
         // The design's dialog in the window, listing each session (spec §5).
         asking = true;
-        mainWindow.show();
+        bringForward(mainWindow);
         const quit = await new Promise<boolean>((resolve) => {
           answerQuit = resolve;
           quitAsker.emit(
@@ -481,7 +668,10 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
         const options = {
           type: 'warning' as const,
           message: `Stop ${sessions}?`,
-          detail: `Quitting stops ${busy === 1 ? 'it' : 'them'}. Claude conversations can be resumed later.`,
+          detail: `Quitting stops ${busy === 1 ? 'it' : 'them'}. ${
+            unfinished?.quitNote(claudeWorkspaces(busySessions)) ??
+            'Claude conversations can be resumed later.'
+          }`,
           buttons: ['Quit', 'Cancel'],
           defaultId: 0,
           cancelId: 1,
@@ -496,7 +686,9 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
         if (response !== 0) return;
       }
       if (status) status.quitting = true;
-      host.close();
+      // What Claude was doing, before it stops (spec §9.7).
+      unfinished?.atQuit(claudeWorkspaces(host.list().filter((s) => s.status === 'running')));
+      stopAccepting();
       await host.stopAll();
       stopped = true;
       app.quit();

@@ -10,6 +10,11 @@ export type LookupResult =
       refused: string[];
       /** Claude's own explanation, shortened, when it gives no title and names no tool. */
       detail?: string;
+      /**
+       * The lookup ran and found no such task (empty output, or Claude found
+       * no title): New workspace goes on without a title (spec §13.7).
+       */
+      notFound?: boolean;
     };
 
 export const lookupFailed = (
@@ -17,6 +22,15 @@ export const lookupFailed = (
   refused: string[] = [],
   detail?: string,
 ): LookupResult => ({ ok: false, message, refused, ...(detail ? { detail } : {}) });
+
+/** The lookup ran and found no such task (spec §13.7). */
+export const lookupNotFound = (message: string, detail?: string): LookupResult => ({
+  ok: false,
+  message,
+  refused: [],
+  ...(detail ? { detail } : {}),
+  notFound: true,
+});
 
 /** Titles longer than this are cut. */
 const MAX_TITLE = 200;
@@ -198,7 +212,7 @@ export function parseClaudeLookup(stdout: string, id: string): LookupResult {
   const title = typeof answer.title === 'string' ? cleanTitle(answer.title, id) : null;
   return title
     ? { ok: true, title }
-    : lookupFailed('Claude found no title', [], explanation(answer.reason, text));
+    : lookupNotFound('Claude found no title', explanation(answer.reason, text));
 }
 
 /** Longer explanations are cut. */

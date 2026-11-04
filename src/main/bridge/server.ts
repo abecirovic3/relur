@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { BRAND } from '@shared/brand';
 
 /** A hook event as the helper forwards it (spec §10.1). */
 export interface HookMessage {
@@ -29,6 +30,8 @@ export interface AddRequest {
   terminalProfileId: string | null;
   /** `--all`: add every repository one level down in `path` (spec §7.5). */
   all?: boolean;
+  /** `--new`: make a new repository at `path` first (spec §7.5). */
+  create?: { readme: boolean; gitignore: boolean } | null;
 }
 
 export interface AddedProject {
@@ -129,6 +132,8 @@ export class HookBridge {
   private readonly events = new EventEmitter();
   private cli: CliHandlers | null = null;
   private port = 0;
+  /** Set once quitting goes ahead: requests are refused and nothing is dispatched (spec §5). */
+  private closed = false;
 
   get url(): string {
     return `http://127.0.0.1:${this.port}`;
@@ -142,6 +147,15 @@ export class HookBridge {
     });
     this.port = (server.address() as AddressInfo).port;
     this.server = server;
+  }
+
+  /**
+   * Refuses every request from now on (503), so no hook event, status line or
+   * command reaches the app while it shuts down; the helper's hooks still
+   * exit 0. The server itself stops with stop().
+   */
+  close(): void {
+    this.closed = true;
   }
 
   stop(): Promise<void> {
@@ -218,6 +232,7 @@ export class HookBridge {
       return reply(400, { error: 'invalid JSON' });
     }
     if (!isRecord(body)) return reply(400, { error: 'expected an object' });
+    if (this.closed) return reply(503, { ok: false, error: `${BRAND.displayName} is quitting` });
 
     switch (req.url) {
       case '/hook': {
@@ -261,6 +276,13 @@ export class HookBridge {
             base: str(body.base),
             terminalProfileId: str(body.terminalProfileId),
             all: body.all === true,
+            create:
+              body.create && typeof body.create === 'object'
+                ? {
+                    readme: (body.create as { readme?: unknown }).readme !== false,
+                    gitignore: (body.create as { gitignore?: unknown }).gitignore !== false,
+                  }
+                : null,
           })
           .catch((error: unknown): AddResult => ({ ok: false, error: message(error) }));
         return reply(200, result);

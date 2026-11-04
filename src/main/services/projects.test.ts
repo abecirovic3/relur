@@ -241,3 +241,140 @@ describe('adding a folder of repositories (spec §6.1, §7.5)', () => {
     );
   });
 });
+
+describe('New repository and Clone from URL (spec §6.1, §7.5)', () => {
+  it('checks the folder: the name, an existing parent, the target, a repository around it', async () => {
+    const parent = path.join(fx.root, 'new-parent');
+    fs.mkdirSync(path.join(parent, 'taken'), { recursive: true });
+    fs.writeFileSync(path.join(parent, 'taken', 'x'), '');
+    expect(await projects.checkNewFolder('work', parent, 'fresh')).toEqual({
+      target: path.join(parent, 'fresh'),
+      problem: null,
+      insideRepository: null,
+    });
+    expect((await projects.checkNewFolder('work', parent, 'taken')).problem).toMatch(/isn't empty/);
+    expect((await projects.checkNewFolder('work', parent, '-x')).problem).toMatch(/"-"/);
+    await expect(projects.checkNewFolder('work', path.join(fx.root, 'nope'), 'a')).rejects.toThrow(
+      /There is no folder/,
+    );
+    const outer = fx.localRepo('outer-repo');
+    expect((await projects.checkNewFolder('work', outer, 'nested')).insideRepository).toBe(outer);
+  });
+
+  it('creates a repository on the profile base branch and adds it without a remote', async () => {
+    const parent = path.join(fx.root, 'created');
+    fs.mkdirSync(parent);
+    const project = await projects.create({
+      profileId: 'personal',
+      parent,
+      name: 'fresh-repo',
+      readme: true,
+      gitignore: false,
+    });
+    expect(project).toMatchObject({
+      id: 'fresh-repo',
+      profileId: 'personal',
+      remote: null,
+      baseBranch: 'main',
+    });
+    const dir = path.join(parent, 'fresh-repo');
+    expect(fx.git(dir, 'ls-files').trim()).toBe('README.md');
+    // Rule R1 still applies: a second profile can't take it.
+    await expect(
+      projects.add({
+        profileId: 'work',
+        repoPath: dir,
+        name: 'x',
+        remote: null,
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/Personal profile/);
+    // A folder that isn't empty is refused, and nothing is touched.
+    await expect(
+      projects.create({
+        profileId: 'personal',
+        parent,
+        name: 'fresh-repo',
+        readme: true,
+        gitignore: true,
+      }),
+    ).rejects.toThrow(/isn't empty/);
+  });
+
+  it('refuses a missing worktree folder before making the repository', async () => {
+    const parent = path.join(fx.root, 'created-2');
+    fs.mkdirSync(parent);
+    await expect(
+      projects.create({
+        profileId: 'work',
+        parent,
+        name: 'never',
+        readme: true,
+        gitignore: true,
+        worktreeRoot: path.join(fx.root, 'no-such-folder'),
+      }),
+    ).rejects.toThrow(/is not a folder/);
+    expect(fs.existsSync(path.join(parent, 'never'))).toBe(false);
+  });
+
+  it("adds a clone with its remote and the remote's default branch", async () => {
+    const { clone } = fx.cloneWithRemote('cloned-one', 'develop');
+    const project = await projects.addClone('work', clone, null);
+    expect(project).toMatchObject({ remote: 'origin', baseBranch: 'develop', name: 'cloned-one' });
+  });
+
+  it('changes the remote to one of the repository’s, or none', async () => {
+    const { clone } = fx.cloneWithRemote('remote-change');
+    fx.git(clone, 'remote', 'add', 'upstream', clone);
+    const project = await projects.addClone('work', clone, null);
+    expect(await projects.remotes(project.id)).toEqual(['origin', 'upstream']);
+    expect((await projects.setRemote(project.id, 'upstream')).remote).toBe('upstream');
+    expect((await projects.setRemote(project.id, null)).remote).toBeNull();
+    await expect(projects.setRemote(project.id, 'nope')).rejects.toThrow(/no remote named/);
+  });
+
+  it('picks up origin once a project without a remote gets one', async () => {
+    const repo = fx.localRepo('later-remote');
+    const project = await projects.add({
+      profileId: 'work',
+      repoPath: repo,
+      name: 'later-remote',
+      remote: null,
+      baseBranch: 'main',
+    });
+    expect(await projects.pickUpRemote(project.id)).toBeNull();
+    fx.git(repo, 'remote', 'add', 'other', repo);
+    expect(await projects.pickUpRemote(project.id)).toBeNull();
+    fx.git(repo, 'remote', 'add', 'origin', repo);
+    expect((await projects.pickUpRemote(project.id))?.remote).toBe('origin');
+    // Only once: it has a remote now.
+    expect(await projects.pickUpRemote(project.id)).toBeNull();
+  });
+
+  it('`add --new` creates and adds, with --name; --base is refused', async () => {
+    const target = path.join(fx.root, 'cli-new', 'made-by-cli');
+    fs.mkdirSync(path.dirname(target));
+    const request = {
+      path: target,
+      profileId: 'work',
+      name: null,
+      base: null,
+      terminalProfileId: null,
+      create: { readme: false, gitignore: true },
+    };
+    expect(await projects.addFromCli({ ...request, base: 'dev' })).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/--base/),
+    });
+    const result = await projects.addFromCli({ ...request, name: 'Made by CLI' });
+    expect(result).toMatchObject({ ok: true, project: { baseBranch: 'main' } });
+    expect(config.require().projects.find((p) => p.repoPath.endsWith('made-by-cli'))?.name).toBe(
+      'Made by CLI',
+    );
+    expect(fx.git(target, 'ls-files').trim()).toBe('.gitignore');
+    expect(await projects.addFromCli(request)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/isn't empty/),
+    });
+  });
+});

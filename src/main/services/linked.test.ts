@@ -102,6 +102,8 @@ describe('WorkspaceRecords with linked repositories', () => {
       unread: false,
       stateMessage: null,
       background: 0,
+      unfinished: null,
+      lastPrompt: null,
       stateSince: null,
       claudeSessionId: null,
       ports: null,
@@ -548,5 +550,98 @@ exec sleep 30
       records.insert({ ...(records.get(workspace.id) as Workspace), id: 'no-ports', ports: null });
       expect(cli.sessionNote('no-ports')).not.toContain('Use ports');
     });
+  });
+
+  describe('the base when the remote lacks it (spec §7.3)', () => {
+    /** A project whose origin is a new, empty repository. */
+    const emptyRemoteProject = () => {
+      const repoPath = fx.localRepo('fresh');
+      const origin = path.join(fx.root, 'fresh-origin.git');
+      fx.git(fx.root, 'init', '-q', '--bare', origin);
+      fx.git(repoPath, 'remote', 'add', 'origin', origin);
+      projects.push({ id: 'fresh', profileId: 'work', name: 'fresh', repoPath, remote: 'origin' });
+      writeConfig();
+      config.reload();
+      return { repoPath, origin };
+    };
+    const createIn = (projectId: string, branch: string, extra: { baseBranch?: string } = {}) =>
+      workspaces.create({
+        projectId,
+        taskId: null,
+        title: branch,
+        branch,
+        baseBranch: extra.baseBranch ?? 'main',
+      });
+    const head = (dir: string) => fx.git(dir, 'rev-parse', 'HEAD').trim();
+
+    it('starts from the local base until the remote has it, then from the remote', async () => {
+      const { repoPath, origin } = emptyRemoteProject();
+      const first = await createIn('fresh', 'first');
+      expect(first.notes).toEqual([
+        "main isn't on origin yet; the workspace starts from your local main",
+      ]);
+      expect(head(first.workspace.worktreePath)).toBe(head(repoPath));
+      // Pushed, and one more commit on the remote: the next one starts there.
+      fx.git(repoPath, 'push', '-q', 'origin', 'main');
+      const other = path.join(fx.root, 'fresh-other');
+      fx.git(fx.root, 'clone', '-q', '-b', 'main', origin, other);
+      fx.git(other, 'commit', '-q', '--allow-empty', '-m', 'on the remote');
+      fx.git(other, 'push', '-q', 'origin', 'main');
+      const second = await createIn('fresh', 'second');
+      expect(second.notes).toEqual([]);
+      expect(head(second.workspace.worktreePath)).toBe(head(other));
+    });
+
+    it("starts from the local base when the remote can't be reached, with the reason", async () => {
+      const { repoPath } = emptyRemoteProject();
+      fx.git(repoPath, 'remote', 'set-url', 'origin', path.join(fx.root, 'gone.git'));
+      const { workspace, notes } = await createIn('fresh', 'offline');
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toMatch(
+        /^Couldn't fetch origin\/main \(.*gone\.git.*\); the workspace starts from your local main$/,
+      );
+      expect(head(workspace.worktreePath)).toBe(head(repoPath));
+    });
+
+    it('fails only when the base is neither on the remote nor local', async () => {
+      emptyRemoteProject();
+      await expect(createIn('fresh', 'nowhere', { baseBranch: 'develop' })).rejects.toThrow(
+        'develop is neither on origin nor a local branch',
+      );
+      expect(fs.existsSync(path.join(fx.root, 'wt', 'fresh', 'nowhere'))).toBe(false);
+    });
+  });
+
+  it('gives a branch from the task the next free name; offers it for a typed one', async () => {
+    const api = projects.find((p) => p.id === 'api')?.repoPath as string;
+    fx.git(api, 'branch', 'landing');
+    fx.git(path.join(fx.root, 'api-origin.git'), 'branch', 'landing-2', 'main');
+    expect(await workspaces.branchCheck('api', 'landing')).toEqual({
+      problem: 'A branch named landing already exists',
+      suggestion: 'landing-2',
+    });
+    expect(await workspaces.branchCheck('api', 'bad name..')).toEqual({
+      problem: '"bad name.." isn\'t a valid branch name',
+      suggestion: 'bad-name',
+    });
+    expect(await workspaces.branchCheck('api', 'free')).toEqual({
+      problem: null,
+      suggestion: null,
+    });
+    // Create asks the remote too: landing-2 is there, so landing-3.
+    const { workspace, notes } = await workspaces.create({
+      projectId: 'api',
+      taskId: null,
+      title: 'Landing',
+      branch: 'landing',
+      baseBranch: 'main',
+      uniqueBranch: true,
+    });
+    expect(workspace.branch).toBe('landing-3');
+    expect(notes).toEqual(['landing already exists; the branch is landing-3']);
+    // A typed branch the remote has fails, naming a free one.
+    await expect(create('landing-2', [])).rejects.toThrow(
+      'origin already has a branch named landing-2; landing-2-2 is free',
+    );
   });
 });

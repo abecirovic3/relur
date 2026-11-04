@@ -61,4 +61,35 @@ describe('menuTemplate', () => {
       expect(keys).toContain('Ctrl+Q');
     });
   }
+
+  for (const isMac of [true, false]) {
+    it(`has Report a Bug… and Request a Feature… under the Guide in Help (${isMac ? 'macOS' : 'Linux'})`, () => {
+      const chosen: string[] = [];
+      const template = menuTemplate({
+        isMac,
+        isDev: false,
+        openConfig: noop,
+        reloadConfig: noop,
+        quitOnClose: false,
+        setQuitOnClose: noop,
+        request: noop,
+        feedback: {
+          reportBug: () => chosen.push('bug'),
+          requestFeature: () => chosen.push('feature'),
+        },
+      });
+      const help = template.find((m) => m.role === 'help')?.submenu as MenuItemConstructorOptions[];
+      const items = help.map((i) => i.label ?? i.role ?? i.type);
+      expect(items.slice(-4)).toEqual([
+        expect.stringMatching(/ Guide$/),
+        'separator',
+        'Report a Bug…',
+        'Request a Feature…',
+      ]);
+      for (const item of help.slice(-2)) {
+        item.click?.({} as never, undefined, {} as never);
+      }
+      expect(chosen).toEqual(['bug', 'feature']);
+    });
+  }
 });

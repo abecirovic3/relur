@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
-import { BRAND, envVar } from '@shared/brand';
+import { BRAND } from '@shared/brand';
 import { app, BrowserWindow, Notification, webContents } from 'electron';
 import type { ConfigStore } from '../config/store';
-import { linuxIconPath } from '../window';
+import { linuxIconPath, testWindows } from '../window';
 import { LauncherBadge, sessionBusPath } from './launcher-entry';
 import type { Alert, StatusPlatform } from './service';
 
@@ -27,7 +27,7 @@ export class ElectronStatusPlatform implements StatusPlatform {
   private readonly events = new EventEmitter();
   /** Notifications a scripted test reads (`globalThis.__notifications`); none are shown then. */
   private readonly recorded: Alert[] = [];
-  private readonly testRun = process.env[envVar('TEST_WINDOW')] === 'background';
+  private readonly testRun = testWindows();
   /** Linux: the launcher badge over the session bus, where the dock shows one. */
   private readonly launcher =
     process.platform === 'linux'

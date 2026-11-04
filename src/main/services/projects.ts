@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BRAND } from '@shared/brand';
+import { repoNameProblem } from '@shared/new-repository';
 import { projectSlug, WORKTREES_DIR } from '@shared/projects';
 import type { Project, SetupSettings } from '@shared/schemas';
 import type { AddedProject, AddRequest, AddResult, FolderAddLine } from '../bridge/server';
 import type { ConfigStore } from '../config/store';
 import type { EnvService } from '../env/service';
 import { contractHome, expandHome } from '../paths';
+import { createRepository, enclosingRepository, targetProblem } from '../projects/create';
 import { type FolderScan, mapLimit, scanForRepositories } from '../projects/scan';
 
 export interface ProjectCandidate {
@@ -95,6 +97,25 @@ export interface AddManyItem {
 export type AddManyResult =
   | { repoPath: string; ok: true; project: Project }
   | { repoPath: string; ok: false; error: string };
+
+/** A new repository's or clone's folder, as checked while typing (spec §6.1). */
+export interface NewFolderCheck {
+  /** `<parent>/<name>`, absolute. */
+  target: string;
+  /** Why it can't be used, or null. */
+  problem: string | null;
+  /** The repository the parent folder is inside, for a warning; null when none. */
+  insideRepository: string | null;
+}
+
+export interface CreateRepositoryInput {
+  profileId: string;
+  parent: string;
+  name: string;
+  readme: boolean;
+  gitignore: boolean;
+  worktreeRoot?: string | null;
+}
 
 /** How many repositories are inspected at once. */
 export const INSPECT_LIMIT = 4;
@@ -223,6 +244,110 @@ export class ProjectService {
   }
 
   /**
+   * Checks a new repository's or clone's parent folder and name (spec §6.1):
+   * the name, an existing parent, a target that doesn't exist or is empty,
+   * and whether the parent is inside another repository (a warning only).
+   */
+  async checkNewFolder(profileId: string, parent: string, name: string): Promise<NewFolderCheck> {
+    const dir = this.existingFolder(parent);
+    const target = path.join(dir, name);
+    const problem = repoNameProblem(name) ?? targetProblem(target);
+    const git = await this.env.git(profileId);
+    return { target, problem, insideRepository: await enclosingRepository(git, dir) };
+  }
+
+  /**
+   * New repository (spec §6.1): the folder, `git init` on the profile's base
+   * branch, a first commit with the profile's identity, then added as a
+   * project without a remote, with the usual checks.
+   */
+  async create(input: CreateRepositoryInput): Promise<Project> {
+    const profile = this.env.profile(input.profileId);
+    const { target, problem } = await this.checkNewFolder(
+      input.profileId,
+      input.parent,
+      input.name,
+    );
+    if (problem) throw new Error(problem);
+    if (input.worktreeRoot) {
+      // Checked before anything is made: the repository doesn't exist yet.
+      const root = path.resolve(expandHome(input.worktreeRoot.trim()));
+      if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
+        throw new Error(`${input.worktreeRoot} is not a folder`);
+      }
+    }
+    const git = await this.env.git(input.profileId);
+    await createRepository(git, target, {
+      name: input.name,
+      baseBranch: profile.defaults.baseBranch,
+      readme: input.readme,
+      gitignore: input.gitignore,
+    });
+    return this.add({
+      profileId: input.profileId,
+      repoPath: target,
+      name: input.name,
+      remote: null,
+      baseBranch: profile.defaults.baseBranch,
+      worktreeRoot: input.worktreeRoot ?? null,
+    });
+  }
+
+  /**
+   * Adds a finished clone (spec §6.1): its remote, and the remote's default
+   * branch as base, with the usual checks.
+   */
+  async addClone(profileId: string, dir: string, worktreeRoot: string | null): Promise<Project> {
+    const candidate = await this.inspect(dir, profileId);
+    return this.add({
+      profileId,
+      repoPath: candidate.repoPath,
+      name: candidate.name,
+      remote: candidate.remote,
+      baseBranch: candidate.baseBranch,
+      worktreeRoot,
+    });
+  }
+
+  /** The repository's remotes, for the project view's Remote › Change… (spec §6.10). */
+  async remotes(projectId: string): Promise<string[]> {
+    const project = this.require(projectId);
+    const git = await this.env.git(project.profileId);
+    return git.remotes(realpath(expandHome(project.repoPath)));
+  }
+
+  /** Sets the project's remote, one of the repository's, or null for none (spec §6.10). */
+  async setRemote(projectId: string, remote: string | null): Promise<Project> {
+    if (remote !== null && !(await this.remotes(projectId)).includes(remote)) {
+      throw new Error(`The repository has no remote named "${remote}"`);
+    }
+    return this.updateProject(projectId, (entry) => {
+      entry.remote = remote;
+    });
+  }
+
+  /**
+   * A project without a remote takes `origin` once the repository has one
+   * (spec §6.10), for example after `git remote add` in a shell. Returns the
+   * project when it changed.
+   */
+  async pickUpRemote(projectId: string): Promise<Project | null> {
+    const project = this.config.get().config?.projects.find((p) => p.id === projectId);
+    if (!project || project.remote !== null) return null;
+    let remotes: string[];
+    try {
+      remotes = await this.remotes(projectId);
+    } catch {
+      return null;
+    }
+    if (!remotes.includes('origin')) return null;
+    return this.updateProject(projectId, (entry) => {
+      if (entry.remote !== null) return;
+      entry.remote = 'origin';
+    });
+  }
+
+  /**
    * `<slug> add` (spec §7.5). Inside a terminal of the app the profile is the
    * terminal's own and `--profile` must match it; outside, `--profile` is
    * required. The same checks as Add project apply.
@@ -241,6 +366,7 @@ export class ProjectService {
       return { ok: false, error: `There is no profile "${profileId}"` };
     }
     if (request.all) return this.addFolderFromCli(request, profileId);
+    if (request.create) return this.createFromCli(request, profileId);
     try {
       const examined = await this.examine(request.path, profileId);
       if (examined.kind === 'folder') {
@@ -265,6 +391,30 @@ export class ProjectService {
         baseBranch: request.base ?? candidate.baseBranch,
       });
       return { ok: true, project: added(project, candidate.baseBranch) };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** `<slug> add --new <path>` (spec §7.5): a new repository at `path`, then added. */
+  private async createFromCli(request: AddRequest, profileId: string): Promise<AddResult> {
+    if (request.base) {
+      return {
+        ok: false,
+        error: "--base doesn't apply to --new: it uses the profile's base branch",
+      };
+    }
+    try {
+      const target = path.resolve(expandHome(request.path));
+      const project = await this.create({
+        profileId,
+        parent: path.dirname(target),
+        name: path.basename(target),
+        readme: request.create?.readme ?? true,
+        gitignore: request.create?.gitignore ?? true,
+      });
+      const named = request.name ? await this.rename(project.id, request.name) : project;
+      return { ok: true, project: added(named, named.baseBranch ?? '') };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -374,6 +524,31 @@ export class ProjectService {
       if (kept.length === projects.length) throw new Error(`Unknown project "${projectId}"`);
       raw.projects = kept;
     });
+  }
+
+  private rename(projectId: string, name: string): Project {
+    const trimmed = name.trim();
+    if (!trimmed) return this.require(projectId);
+    return this.updateProject(projectId, (entry) => {
+      entry.name = trimmed;
+    });
+  }
+
+  private require(projectId: string): Project {
+    const project = this.config.require().projects.find((p) => p.id === projectId);
+    if (!project) throw new Error(`Unknown project "${projectId}"`);
+    return project;
+  }
+
+  private updateProject(projectId: string, change: (entry: Record<string, unknown>) => void) {
+    const config = this.config.update((raw) => {
+      const entry = (Array.isArray(raw.projects) ? raw.projects : []).find(
+        (p) => (p as { id?: unknown }).id === projectId,
+      ) as Record<string, unknown> | undefined;
+      if (!entry) throw new Error(`Unknown project "${projectId}"`);
+      change(entry);
+    });
+    return config.projects.find((p) => p.id === projectId) as Project;
   }
 
   private existingFolder(folder: string): string {

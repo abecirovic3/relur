@@ -53,6 +53,20 @@ function fakeRelease(version: string) {
   fs.writeFileSync(path.join(release, CHECKSUMS_FILE), `${hash}  ${releaseAsset(arch, 'zip')}\n`);
 }
 
+/**
+ * Starts a stand-in app and waits until install.sh would find it (`pgrep -f`,
+ * as it looks): right after spawn, under load, the new process may not be
+ * listed yet, and install.sh would take the app as not running.
+ */
+async function startApp(exe: string): Promise<ChildProcess> {
+  const child = spawn(exe, [], { stdio: 'ignore' });
+  for (let i = 0; i < 100; i++) {
+    if (spawnSync('pgrep', ['-f', exe]).status === 0) return child;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`${exe} never showed up as running`);
+}
+
 const run = (...args: string[]) =>
   spawnSync('sh', [path.join(root, 'install.sh'), ...args], {
     encoding: 'utf8',
@@ -83,38 +97,41 @@ describe('install.sh', () => {
     expect(fs.statSync(path.join(root, 'install.sh')).mode & 0o111).not.toBe(0);
   });
 
-  it.skipIf(!mac)('installs from a release, checks the checksum, updates and uninstalls', () => {
-    fakeRelease('1');
-    const first = run();
-    expect(first.status, first.stderr).toBe(0);
-    expect(first.stdout).toMatch(/Checksum matches\./);
-    expect(first.stdout).toMatch(new RegExp(`${BRAND.displayName} installed: ${apps}/${app}`));
-    const installed = path.join(apps, app, 'Contents');
-    expect(fs.readFileSync(path.join(installed, 'version'), 'utf8')).toBe('1');
-    // The launcher is the app's own, pointing at the installed helper.
-    const launcher = path.join(home, '.local', 'bin', BRAND.cliCommand);
-    const helper = path.join(installed, 'Resources', 'helper', BRAND.helperCommand);
-    expect(fs.readFileSync(launcher, 'utf8')).toBe(launcherScript(helper));
-    expect(launcherTarget(fs.readFileSync(launcher, 'utf8'))).toBe(helper);
-    expect(first.stdout).toMatch(/export PATH="\$HOME\/\.local\/bin:\$PATH"/);
-    // No terminal: no question, just how to open it.
-    expect(first.stdout).not.toMatch(/now\? \[Y\/n\]/);
-    expect(first.stdout).toContain(`run: open "${apps}/${app}"`);
+  it.skipIf(!mac)(
+    'installs from a release, checks the checksum, updates and uninstalls',
+    async () => {
+      fakeRelease('1');
+      const first = run();
+      expect(first.status, first.stderr).toBe(0);
+      expect(first.stdout).toMatch(/Checksum matches\./);
+      expect(first.stdout).toMatch(new RegExp(`${BRAND.displayName} installed: ${apps}/${app}`));
+      const installed = path.join(apps, app, 'Contents');
+      expect(fs.readFileSync(path.join(installed, 'version'), 'utf8')).toBe('1');
+      // The launcher is the app's own, pointing at the installed helper.
+      const launcher = path.join(home, '.local', 'bin', BRAND.cliCommand);
+      const helper = path.join(installed, 'Resources', 'helper', BRAND.helperCommand);
+      expect(fs.readFileSync(launcher, 'utf8')).toBe(launcherScript(helper));
+      expect(launcherTarget(fs.readFileSync(launcher, 'utf8'))).toBe(helper);
+      expect(first.stdout).toMatch(/export PATH="\$HOME\/\.local\/bin:\$PATH"/);
+      // No terminal: no question, just how to open it.
+      expect(first.stdout).not.toMatch(/now\? \[Y\/n\]/);
+      expect(first.stdout).toContain(`run: open "${apps}/${app}"`);
 
-    // Running it again updates; a running copy is quit first (--yes: no question).
-    fakeRelease('2');
-    running = spawn(path.join(installed, 'MacOS', BRAND.displayName), [], { stdio: 'ignore' });
-    const second = run('--yes');
-    expect(second.status, second.stderr).toBe(0);
-    expect(second.stdout).toMatch(/Quit [^\n]*\.\n[\s\S]*updated/);
-    expect(fs.readFileSync(path.join(installed, 'version'), 'utf8')).toBe('2');
+      // Running it again updates; a running copy is quit first (--yes: no question).
+      fakeRelease('2');
+      running = await startApp(path.join(installed, 'MacOS', BRAND.displayName));
+      const second = run('--yes');
+      expect(second.status, second.stderr).toBe(0);
+      expect(second.stdout).toMatch(/Quit [^\n]*\.\n[\s\S]*updated/);
+      expect(fs.readFileSync(path.join(installed, 'version'), 'utf8')).toBe('2');
 
-    const removed = run('--uninstall');
-    expect(removed.status, removed.stderr).toBe(0);
-    expect(fs.existsSync(path.join(apps, app))).toBe(false);
-    expect(fs.existsSync(launcher)).toBe(false);
-    expect(removed.stdout).toMatch(/Kept your settings in .*Application Support/);
-  });
+      const removed = run('--uninstall');
+      expect(removed.status, removed.stderr).toBe(0);
+      expect(fs.existsSync(path.join(apps, app))).toBe(false);
+      expect(fs.existsSync(launcher)).toBe(false);
+      expect(removed.stdout).toMatch(/Kept your settings in .*Application Support/);
+    },
+  );
 
   it.skipIf(!mac)('offers to open the app when run in a terminal, but not with --yes', async () => {
     fakeRelease('1');
@@ -170,9 +187,7 @@ describe('install.sh', () => {
       expect(first.stdout).toMatch(/Left .* alone: it isn't/);
       expect(fs.readFileSync(launcher, 'utf8')).toBe('#!/bin/sh\necho mine\n');
       // No terminal to ask on: a running copy stays, and nothing changes.
-      running = spawn(path.join(apps, app, 'Contents', 'MacOS', BRAND.displayName), [], {
-        stdio: 'ignore',
-      });
+      running = await startApp(path.join(apps, app, 'Contents', 'MacOS', BRAND.displayName));
       // Its own session (detached): there is no /dev/tty to ask on.
       const child = spawn('sh', [path.join(root, 'install.sh')], {
         env: {
@@ -197,7 +212,7 @@ describe('install.sh', () => {
 
   it.skipIf(!mac)(
     'quits and removes the old app, replaces its launcher, and leaves the rest of ~/.local/bin',
-    () => {
+    async () => {
       fakeRelease('1');
       const oldName = BRAND.legacy.displayName;
       const oldExe = path.join(apps, `${oldName}.app`, 'Contents', 'MacOS', oldName);
@@ -210,7 +225,7 @@ describe('install.sh', () => {
       fs.mkdirSync(bin, { recursive: true });
       fs.writeFileSync(oldLauncher, `#!/bin/sh\n${LEGACY_LAUNCHER_MARK}\nexec '/x/helper' "$@"\n`);
       fs.writeFileSync(path.join(bin, 'uv'), 'mine');
-      running = spawn(oldExe, [], { stdio: 'ignore' });
+      running = await startApp(oldExe);
 
       const result = run('--yes');
       expect(result.status, result.stderr).toBe(0);
@@ -223,9 +238,7 @@ describe('install.sh', () => {
       expect(fs.readFileSync(path.join(bin, 'uv'), 'utf8')).toBe('mine');
 
       // Run from a terminal of the app it has to quit, it stops before anything changes.
-      running = spawn(path.join(apps, app, 'Contents', 'MacOS', BRAND.displayName), [], {
-        stdio: 'ignore',
-      });
+      running = await startApp(path.join(apps, app, 'Contents', 'MacOS', BRAND.displayName));
       const inside = spawnSync('sh', [path.join(root, 'install.sh'), '--yes'], {
         encoding: 'utf8',
         env: {
@@ -338,10 +351,16 @@ while :; do sleep 1; done
     fakeAppImage('2');
     running = spawn(appImage, [], { stdio: 'ignore', env: { ...env(), APPIMAGE: appImage } });
     const lock = path.join(config, BRAND.slug, 'SingletonLock');
-    for (let i = 0; i < 50 && !fs.existsSync(path.dirname(lock)); i++) {
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    await new Promise((r) => setTimeout(r, 300));
+    // Found by its lock, which it writes once it runs.
+    const locked = () => {
+      try {
+        return fs.readlinkSync(lock) === `host-${running?.pid}`;
+      } catch {
+        return false;
+      }
+    };
+    for (let i = 0; i < 100 && !locked(); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(locked(), 'the stand-in AppImage runs').toBe(true);
     const second = runLinux('--yes');
     expect(second.status, second.stderr).toBe(0);
     expect(second.stdout).toMatch(/Quit [^\n]*\.\n[\s\S]*updated/);

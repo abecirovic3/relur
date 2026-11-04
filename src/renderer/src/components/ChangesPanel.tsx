@@ -1,5 +1,7 @@
+import { BRAND } from '@shared/brand';
 import { type ChangedFile, type ChangeGroup, diffFirstLine, type FileDiff } from '@shared/changes';
 import type { Project } from '@shared/schemas';
+import { matchShortcut } from '@shared/shortcuts';
 import { PR_LABEL, type PrStatus, type Workspace, type WorkspaceRepo } from '@shared/workspaces';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -12,7 +14,8 @@ import {
   useState,
 } from 'react';
 import { trpcClient, useTRPC } from '../trpc';
-import { button, iconButton, inputClass, keyHint } from '../ui/controls';
+import { button, iconButton, inputClass, isMac, keyHint } from '../ui/controls';
+import { remember } from '../ui/remember';
 import { PrimaryTag } from './DeleteWorkspaceDialog';
 import { useOpenInEditor } from './EditorPicker';
 
@@ -40,6 +43,13 @@ const KIND_COLOR: Record<ChangedFile['kind'], string> = {
 };
 
 /** Read-only diff of one file in Monaco's diff editor, inline or side by side. */
+/**
+ * Until when a diff about to be created takes the focus: the previous or next
+ * file was picked with the keys from inside the diff (⌥⌘↑ / ⌥⌘↓), and the
+ * diff of the new file replaces the focused one.
+ */
+let refocusDiffUntil = 0;
+
 function DiffView({
   diff,
   path,
@@ -87,6 +97,10 @@ function DiffView({
           scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
         });
         editor.setModel({ original, modified });
+        if (Date.now() < refocusDiffUntil) {
+          refocusDiffUntil = 0;
+          editor.getModifiedEditor().focus();
+        }
         if (cursorLine) cursorLine.current = null;
         const cursor = editor.getModifiedEditor().onDidChangeCursorPosition((e) => {
           if (cursorLine && e.source !== 'api') cursorLine.current = e.position.lineNumber;
@@ -384,7 +398,12 @@ function FinishControls({ workspace }: { workspace: Workspace }) {
         </div>
       ) : null}
       {!s.hasRemote ? (
-        <p className="text-sm text-fg-subtle">No remote: Push and Create PR aren't available.</p>
+        <p data-no-remote className="text-sm text-fg-subtle">
+          No remote: Push and Create PR need one. Add it in a Shell tab with{' '}
+          <span className="font-mono select-text">git remote add origin &lt;url&gt;</span>;{' '}
+          {BRAND.displayName} picks up <span className="font-mono">origin</span> by itself, or
+          choose another under Remote in the project view.
+        </p>
       ) : null}
       {s.uncommitted === 0 && s.unpushed === 0 && !s.pushed && s.hasRemote ? (
         <p className="text-sm text-fg-subtle">Nothing to commit or push yet.</p>
@@ -576,6 +595,23 @@ const MAX_SHARE = 0.75;
 const defaultWidth = (narrow: boolean) => (narrow ? MIN_WIDTH : 380);
 /** The diff's width side by side needs; below it the diff is unified, with a hint. */
 const SPLIT_MIN_WIDTH = 640;
+/**
+ * The file list (spec §6.4): beside the terminal its height, in Full view its
+ * column's width, and whether it is collapsed to one line, all kept across
+ * restarts. Without a dragged height it is as tall as its files, up to about
+ * five rows (and a linked workspace's repository headers), then scrolls.
+ */
+const LIST_HEIGHT_KEY = 'changes-list-height';
+const LIST_WIDTH_KEY = 'changes-list-width';
+const LIST_COLLAPSED_KEY = 'changes-list-collapsed';
+const FILE_ROW = 26;
+const listAutoMax = (linked: boolean) => FILE_ROW * 5 + (linked ? 96 : 34);
+const LIST_MIN_HEIGHT = 56;
+/** What the diff keeps below a dragged list. */
+const DIFF_MIN_HEIGHT = 120;
+const LIST_DEFAULT_WIDTH = 280;
+const LIST_MIN_WIDTH = 180;
+const LIST_MAX_SHARE = 0.5;
 
 type DiffStyle = 'unified' | 'split';
 
@@ -585,14 +621,6 @@ function stored(key: string): string | null {
     return localStorage.getItem(key);
   } catch {
     return null;
-  }
-}
-function store(key: string, value: string | null): void {
-  try {
-    if (value === null) localStorage.removeItem(key);
-    else localStorage.setItem(key, value);
-  } catch {
-    // kept for this run only
   }
 }
 
@@ -613,7 +641,7 @@ function useDiffStyle(): [DiffStyle, (style: DiffStyle) => void] {
     style,
     (next) => {
       setStyle(next);
-      store(STYLE_KEY, next);
+      remember(STYLE_KEY, next);
     },
   ];
 }
@@ -629,6 +657,296 @@ function useWidth(element: HTMLElement | null): number {
     return () => observer.disconnect();
   }, [element]);
   return width;
+}
+
+/** A size in local storage, or null for the default. */
+function useStoredSize(key: string): [number | null, (size: number | null) => void] {
+  const [size, setSize] = useState<number | null>(() => {
+    const value = Number(stored(key));
+    return stored(key) !== null && Number.isFinite(value) && value > 0 ? value : null;
+  });
+  return [
+    size,
+    (next) => {
+      setSize(next);
+      remember(key, next === null ? null : String(Math.round(next)));
+    },
+  ];
+}
+
+/** Whether the file list is collapsed to one line (spec §6.4), kept across restarts. */
+export function useListCollapsed(): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => stored(LIST_COLLAPSED_KEY) === '1');
+  return [
+    collapsed,
+    () =>
+      setCollapsed((current) => {
+        remember(LIST_COLLAPSED_KEY, current ? null : '1');
+        return !current;
+      }),
+  ];
+}
+
+/**
+ * A divider that drags: between the file list and the diff (rows), or the
+ * list's column and the diff in Full view (columns). The size goes to
+ * `onSize` while dragging and is saved on release; double-click resets it.
+ */
+function Divider({
+  axis,
+  measure,
+  clamp,
+  onSize,
+  onReset,
+  title,
+  data,
+}: {
+  axis: 'rows' | 'columns';
+  /** The list's size now, where the drag starts from. */
+  measure: () => number;
+  clamp: (size: number) => number;
+  onSize: (size: number, save: boolean) => void;
+  onReset: () => void;
+  title: string;
+  data: string;
+}) {
+  const drag = useRef<{ at: number; size: number; now: number } | null>(null);
+  const pos = (e: PointerEvent) => (axis === 'rows' ? e.clientY : e.clientX);
+  const rows = axis === 'rows';
+  return (
+    <div className={`relative shrink-0 bg-line ${rows ? 'h-px' : 'w-px'}`}>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a pointer-only drag edge; the list also collapses from its header */}
+      <div
+        {...{ [data]: '' }}
+        title={title}
+        className={`absolute z-10 hover:bg-line-strong/60 ${rows ? 'inset-x-0 -top-1 h-2 cursor-row-resize' : 'inset-y-0 -left-1 w-2 cursor-col-resize'}`}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          const size = measure();
+          drag.current = { at: pos(e), size, now: size };
+        }}
+        onPointerMove={(e) => {
+          if (!drag.current) return;
+          drag.current.now = clamp(drag.current.size + pos(e) - drag.current.at);
+          onSize(drag.current.now, false);
+        }}
+        onPointerUp={() => {
+          if (drag.current) onSize(drag.current.now, true);
+          drag.current = null;
+        }}
+        onPointerCancel={() => {
+          if (drag.current) onSize(drag.current.now, true);
+          drag.current = null;
+        }}
+        onDoubleClick={onReset}
+      />
+    </div>
+  );
+}
+
+/**
+ * The file list and the diff (spec §6.4). Beside the terminal the list sits
+ * above the diff, as tall as its files up to about five rows, or as dragged;
+ * in Full view it is a column on the left, as wide as dragged. Collapsed, the
+ * one-line `collapsedLine` stands in for the list, above the diff.
+ */
+function FilesAndDiff({
+  full,
+  linked,
+  collapsed,
+  listClass,
+  list,
+  collapsedLine,
+  diff,
+}: {
+  full: boolean;
+  linked: boolean;
+  collapsed: boolean;
+  listClass: string;
+  list: ReactNode;
+  collapsedLine: ReactNode;
+  diff: ReactNode;
+}) {
+  const [height, setHeight] = useStoredSize(LIST_HEIGHT_KEY);
+  const [width, setWidth] = useStoredSize(LIST_WIDTH_KEY);
+  // While dragging: shown at once, saved on release.
+  const [dragged, setDragged] = useState<number | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const shownHeight = full ? null : (dragged ?? height);
+  const shownWidth = full ? (dragged ?? width ?? LIST_DEFAULT_WIDTH) : null;
+  const listbox = (
+    <div
+      ref={listRef}
+      role="listbox"
+      aria-label="Changed files"
+      tabIndex={0}
+      data-changes-list={full ? 'column' : shownHeight === null ? 'auto' : 'sized'}
+      style={
+        full
+          ? { width: shownWidth ?? undefined, maxWidth: `${LIST_MAX_SHARE * 100}%` }
+          : shownHeight === null
+            ? { maxHeight: listAutoMax(linked) }
+            : { height: shownHeight, maxHeight: `calc(100% - ${DIFF_MIN_HEIGHT}px)` }
+      }
+      className={`shrink-0 overflow-y-auto outline-none ${listClass}`}
+    >
+      {list}
+    </div>
+  );
+  const size = (value: number, save: boolean) => {
+    setDragged(save ? null : value);
+    if (save) (full ? setWidth : setHeight)(value);
+  };
+  if (full) {
+    return (
+      <div ref={box} className="flex min-h-0 flex-1">
+        {collapsed ? null : (
+          <>
+            {listbox}
+            <Divider
+              axis="columns"
+              data="data-changes-column-resize"
+              title="Drag to resize the file list; double-click for its default width"
+              measure={() => listRef.current?.offsetWidth ?? LIST_DEFAULT_WIDTH}
+              clamp={(v) =>
+                Math.max(
+                  LIST_MIN_WIDTH,
+                  Math.min(v, (box.current?.clientWidth ?? v / LIST_MAX_SHARE) * LIST_MAX_SHARE),
+                )
+              }
+              onSize={size}
+              onReset={() => setWidth(null)}
+            />
+          </>
+        )}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {collapsed ? collapsedLine : null}
+          {diff}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div ref={box} className="flex min-h-0 flex-1 flex-col">
+      {collapsed ? (
+        collapsedLine
+      ) : (
+        <>
+          {listbox}
+          <Divider
+            axis="rows"
+            data="data-changes-list-resize"
+            title="Drag to resize the file list; double-click for its default height"
+            measure={() => listRef.current?.offsetHeight ?? LIST_MIN_HEIGHT}
+            clamp={(v) =>
+              Math.max(
+                LIST_MIN_HEIGHT,
+                Math.min(v, (box.current?.clientHeight ?? v + DIFF_MIN_HEIGHT) - DIFF_MIN_HEIGHT),
+              )
+            }
+            onSize={size}
+            onReset={() => setHeight(null)}
+          />
+        </>
+      )}
+      <div className="flex min-h-0 flex-1 flex-col">{diff}</div>
+    </div>
+  );
+}
+
+/** A file group's header ("Uncommitted · n"): a click collapses the whole list (spec §6.4). */
+function ListToggle({ onToggle, children }: { onToggle: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      data-changes-list-toggle
+      aria-expanded
+      title="Collapse the file list to one line"
+      onClick={onToggle}
+      className="flex w-full items-center gap-1.5 text-left hover:text-fg-muted"
+    >
+      <span className="text-[9px]">▼</span>
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The collapsed file list (spec §6.4): one line with the current file, its
+ * place in the list, and previous and next (also ⌥⌘↑ / ⌥⌘↓).
+ */
+function CollapsedFileLine({
+  file,
+  label,
+  index,
+  count,
+  onExpand,
+  onStep,
+}: {
+  file: ChangedFile | null;
+  /** Before the path, e.g. the repository in a linked workspace. */
+  label?: string;
+  index: number;
+  count: number;
+  onExpand: () => void;
+  onStep: (delta: 1 | -1) => void;
+}) {
+  return (
+    <div
+      data-changes-list-collapsed
+      className="flex h-7 shrink-0 items-center gap-1.5 border-b border-line bg-surface pr-1.5 pl-2"
+    >
+      <button
+        type="button"
+        data-changes-list-toggle
+        aria-expanded={false}
+        title="Show the file list"
+        onClick={onExpand}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left font-mono text-sm"
+      >
+        <span className="text-[9px] text-fg-muted">▶</span>
+        {file ? (
+          <>
+            <span className={`w-3 shrink-0 font-semibold ${KIND_COLOR[file.kind]}`}>
+              {file.kind}
+            </span>
+            <span data-changes-current className="min-w-0 flex-1 truncate [direction:rtl]">
+              <bdi>{label ? `${label} · ${file.path}` : file.path}</bdi>
+            </span>
+          </>
+        ) : (
+          <span className="text-fg-subtle">No changes yet</span>
+        )}
+      </button>
+      <span className="shrink-0 font-mono text-xs text-fg-subtle">
+        {count > 0 ? `${index + 1}/${count}` : ''}
+      </span>
+      <button
+        type="button"
+        data-changes-prev
+        className={iconButton}
+        disabled={index <= 0}
+        title={`Previous file (${keyHint('changesFileStep', 0)})`}
+        aria-label="Previous file"
+        onClick={() => onStep(-1)}
+      >
+        ‹
+      </button>
+      <button
+        type="button"
+        data-changes-next
+        className={iconButton}
+        disabled={index >= count - 1}
+        title={`Next file (${keyHint('changesFileStep', 1)})`}
+        aria-label="Next file"
+        onClick={() => onStep(1)}
+      >
+        ›
+      </button>
+    </div>
+  );
 }
 
 /** The diff header's style switch, like a segmented control (components.md: Changes panel). */
@@ -747,12 +1065,15 @@ function ChangesFrame({
   full,
   onToggleFull,
   onKeyDown,
+  onStep,
   children,
 }: {
   narrow: boolean;
   full: boolean;
   onToggleFull: () => void;
   onKeyDown: (e: KeyboardEvent) => void;
+  /** Previous or next file (⌥⌘↑ / ⌥⌘↓), also from inside the diff. */
+  onStep: (delta: 1 | -1) => void;
   children: ReactNode;
 }) {
   const asideRef = useRef<HTMLElement>(null);
@@ -787,11 +1108,11 @@ function ChangesFrame({
   };
   const onDragEnd = () => {
     if (!drag.current) return;
-    store(WIDTH_KEY, String(Math.round(drag.current.now)));
+    remember(WIDTH_KEY, String(Math.round(drag.current.now)));
     drag.current = null;
   };
   const reset = () => {
-    store(WIDTH_KEY, null);
+    remember(WIDTH_KEY, null);
     setWidth(defaultWidth(narrow));
   };
   return (
@@ -801,6 +1122,19 @@ function ChangesFrame({
       data-full={full ? 'true' : 'false'}
       aria-label="Changes"
       tabIndex={-1}
+      // Before Monaco, which would take the keys in the diff.
+      onKeyDownCapture={(e) => {
+        const at = matchShortcut('changesFileStep', e.nativeEvent, isMac);
+        if (at === -1) return;
+        e.preventDefault();
+        e.stopPropagation();
+        // The diff is replaced: the keys stay in the panel meanwhile, then go to the new diff.
+        if ((e.target as HTMLElement).closest('[data-diff-editor]')) {
+          refocusDiffUntil = Date.now() + 3000;
+          asideRef.current?.focus();
+        }
+        onStep(at === 0 ? -1 : 1);
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && full) {
           e.preventDefault();
@@ -930,6 +1264,13 @@ function LinkedChangesPanel({
   const added = lists.reduce((n, l) => n + (l.data?.added ?? 0), 0);
   const removed = lists.reduce((n, l) => n + (l.data?.removed ?? 0), 0);
 
+  const [listCollapsed, toggleList] = useListCollapsed();
+  const at = current ? rows.indexOf(current) : -1;
+  const step = (delta: 1 | -1) => {
+    const next = rows[Math.min(rows.length - 1, Math.max(0, at + delta))];
+    if (next)
+      setSelected({ projectId: next.repo.projectId, group: next.group, path: next.file.path });
+  };
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -937,15 +1278,17 @@ function LinkedChangesPanel({
     }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
-    const at = current ? rows.indexOf(current) : -1;
-    const next =
-      rows[Math.min(rows.length - 1, Math.max(0, at + (e.key === 'ArrowDown' ? 1 : -1)))];
-    if (next)
-      setSelected({ projectId: next.repo.projectId, group: next.group, path: next.file.path });
+    step(e.key === 'ArrowDown' ? 1 : -1);
   };
 
   return (
-    <ChangesFrame narrow={narrow} full={full} onToggleFull={onToggleFull} onKeyDown={onKeyDown}>
+    <ChangesFrame
+      narrow={narrow}
+      full={full}
+      onToggleFull={onToggleFull}
+      onKeyDown={onKeyDown}
+      onStep={step}
+    >
       <div className="flex h-[34px] shrink-0 items-center gap-2 border-b border-line bg-surface pr-2 pl-3.5">
         <span className="text-md font-semibold">Changes</span>
         <span className="truncate text-xs text-fg-subtle">· {repos.length} repositories</span>
@@ -963,13 +1306,22 @@ function LinkedChangesPanel({
           ×
         </button>
       </div>
-      <div
-        role="listbox"
-        aria-label="Changed files"
-        tabIndex={0}
-        className="max-h-[55%] shrink-0 overflow-y-auto border-b border-line outline-none"
-      >
-        {repos.map((repo, i) => {
+      <FilesAndDiff
+        full={full}
+        linked
+        collapsed={listCollapsed}
+        listClass=""
+        collapsedLine={
+          <CollapsedFileLine
+            file={current?.file ?? null}
+            label={current ? name(current.repo.projectId) : undefined}
+            index={at}
+            count={rows.length}
+            onExpand={toggleList}
+            onStep={step}
+          />
+        }
+        list={repos.map((repo, i) => {
           const data = lists[i]?.data;
           const state = states[i]?.data;
           const open = !collapsed[repo.projectId];
@@ -977,9 +1329,10 @@ function LinkedChangesPanel({
             files.length > 0 ? (
               <div>
                 <div className="flex h-6 items-center px-2 text-xs font-semibold text-fg-subtle">
-                  {label} {files.length}
-                  <span className="flex-1" />
-                  {right ? <span className="font-normal">{right}</span> : null}
+                  <ListToggle onToggle={toggleList}>
+                    {label} {files.length}
+                  </ListToggle>
+                  {right ? <span className="shrink-0 font-normal">{right}</span> : null}
                 </div>
                 {files.map((file) => (
                   <FileRow
@@ -1064,44 +1417,46 @@ function LinkedChangesPanel({
             </section>
           );
         })}
-      </div>
-      {current ? (
-        <DiffPane
-          label={
-            <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg-muted">
-              {name(current.repo.projectId)} · {current.file.path}
-            </span>
-          }
-          openButton={
-            current.file.kind !== 'D' ? (
-              <button
-                type="button"
-                data-open-diff
-                className={button('ghost', 'sm')}
-                title="Open in editor, at the line of the cursor in the diff, else the first change"
-                onClick={() =>
-                  editorOpen.open(
-                    current.repo,
-                    current.file,
-                    current.group,
-                    cursorLine.current ??
-                      (shown.current?.key.startsWith(keyOf(current))
-                        ? diffFirstLine(shown.current.diff)
-                        : null),
-                  )
-                }
-              >
-                Open in editor
-              </button>
-            ) : null
-          }
-          diff={shown.current?.key.startsWith(keyOf(current)) ? shown.current.diff : null}
-          path={current.file.path}
-          cursorLine={cursorLine}
-        />
-      ) : (
-        <div className="flex-1" />
-      )}
+        diff={
+          current ? (
+            <DiffPane
+              label={
+                <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg-muted">
+                  {name(current.repo.projectId)} · {current.file.path}
+                </span>
+              }
+              openButton={
+                current.file.kind !== 'D' ? (
+                  <button
+                    type="button"
+                    data-open-diff
+                    className={button('ghost', 'sm')}
+                    title="Open in editor, at the line of the cursor in the diff, else the first change"
+                    onClick={() =>
+                      editorOpen.open(
+                        current.repo,
+                        current.file,
+                        current.group,
+                        cursorLine.current ??
+                          (shown.current?.key.startsWith(keyOf(current))
+                            ? diffFirstLine(shown.current.diff)
+                            : null),
+                      )
+                    }
+                  >
+                    Open in editor
+                  </button>
+                ) : null
+              }
+              diff={shown.current?.key.startsWith(keyOf(current)) ? shown.current.diff : null}
+              path={current.file.path}
+              cursorLine={cursorLine}
+            />
+          ) : (
+            <div className="flex-1" />
+          )
+        }
+      />
       {editorOpen.dialog}
     </ChangesFrame>
   );
@@ -1215,6 +1570,12 @@ function SingleChangesPanel({
     if (shown.current?.key !== key) shown.current = { key, diff: diff.data };
   }
 
+  const [collapsed, toggleCollapsed] = useListCollapsed();
+  const at = current ? rows.indexOf(current) : -1;
+  const step = (delta: 1 | -1) => {
+    const next = rows[Math.min(rows.length - 1, Math.max(0, at + delta))];
+    if (next) setSelected({ group: next.group, path: next.file.path });
+  };
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -1222,17 +1583,16 @@ function SingleChangesPanel({
     }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
-    const at = current ? rows.indexOf(current) : -1;
-    const next =
-      rows[Math.min(rows.length - 1, Math.max(0, at + (e.key === 'ArrowDown' ? 1 : -1)))];
-    if (next) setSelected({ group: next.group, path: next.file.path });
+    step(e.key === 'ArrowDown' ? 1 : -1);
   };
 
   const group = (name: ChangeGroup, label: string, files: ChangedFile[]) =>
     files.length > 0 ? (
       <div>
         <div className="px-2 pt-1 pb-0.5 text-xs text-fg-subtle">
-          {label} · {files.length}
+          <ListToggle onToggle={toggleCollapsed}>
+            {label} · {files.length}
+          </ListToggle>
         </div>
         {files.map((file) => (
           <FileRow
@@ -1247,7 +1607,13 @@ function SingleChangesPanel({
     ) : null;
 
   return (
-    <ChangesFrame narrow={narrow} full={full} onToggleFull={onToggleFull} onKeyDown={onKeyDown}>
+    <ChangesFrame
+      narrow={narrow}
+      full={full}
+      onToggleFull={onToggleFull}
+      onKeyDown={onKeyDown}
+      onStep={step}
+    >
       <div className="flex h-[34px] shrink-0 items-center gap-2 border-b border-line bg-surface pr-2 pl-3.5">
         <span className="text-md font-semibold">Changes</span>
         <span className="truncate font-mono text-xs text-fg-subtle">vs {data?.base ?? '…'}</span>
@@ -1283,56 +1649,68 @@ function SingleChangesPanel({
         </div>
       ) : null}
       {rows.length > 0 ? (
-        <>
-          <div
-            role="listbox"
-            aria-label="Changed files"
-            tabIndex={0}
-            className="max-h-[38%] shrink-0 overflow-y-auto border-b border-line p-1.5 outline-none"
-          >
-            {group('committed', 'Committed', data?.committed ?? [])}
-            {group('uncommitted', 'Uncommitted', data?.uncommitted ?? [])}
-          </div>
-          <DiffPane
-            label={
-              <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg-muted [direction:rtl]">
-                <bdi>{current?.file.path}</bdi>
-              </span>
-            }
-            openButton={
-              current && current.file.kind !== 'D' ? (
-                <button
-                  type="button"
-                  data-open-diff
-                  className={button('ghost', 'sm')}
-                  title="Open in editor, at the line of the cursor in the diff, else the first change"
-                  onClick={() =>
-                    editorOpen.open(
-                      mainRepo,
-                      current.file,
-                      current.group,
-                      cursorLine.current ??
-                        (shown.current?.key.startsWith(`${current.group}:${current.file.path}:`)
-                          ? diffFirstLine(shown.current.diff)
-                          : null),
-                    )
-                  }
-                >
-                  Open in editor
-                </button>
-              ) : null
-            }
-            diff={
-              shown.current &&
-              current &&
-              shown.current.key.startsWith(`${current.group}:${current.file.path}:`)
-                ? shown.current.diff
-                : null
-            }
-            path={current?.file.path ?? ''}
-            cursorLine={cursorLine}
-          />
-        </>
+        <FilesAndDiff
+          full={full}
+          linked={false}
+          collapsed={collapsed}
+          listClass="p-1.5"
+          list={
+            <>
+              {group('committed', 'Committed', data?.committed ?? [])}
+              {group('uncommitted', 'Uncommitted', data?.uncommitted ?? [])}
+            </>
+          }
+          collapsedLine={
+            <CollapsedFileLine
+              file={current?.file ?? null}
+              index={at}
+              count={rows.length}
+              onExpand={toggleCollapsed}
+              onStep={step}
+            />
+          }
+          diff={
+            <DiffPane
+              label={
+                <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg-muted [direction:rtl]">
+                  <bdi>{current?.file.path}</bdi>
+                </span>
+              }
+              openButton={
+                current && current.file.kind !== 'D' ? (
+                  <button
+                    type="button"
+                    data-open-diff
+                    className={button('ghost', 'sm')}
+                    title="Open in editor, at the line of the cursor in the diff, else the first change"
+                    onClick={() =>
+                      editorOpen.open(
+                        mainRepo,
+                        current.file,
+                        current.group,
+                        cursorLine.current ??
+                          (shown.current?.key.startsWith(`${current.group}:${current.file.path}:`)
+                            ? diffFirstLine(shown.current.diff)
+                            : null),
+                      )
+                    }
+                  >
+                    Open in editor
+                  </button>
+                ) : null
+              }
+              diff={
+                shown.current &&
+                current &&
+                shown.current.key.startsWith(`${current.group}:${current.file.path}:`)
+                  ? shown.current.diff
+                  : null
+              }
+              path={current?.file.path ?? ''}
+              cursorLine={cursorLine}
+            />
+          }
+        />
       ) : (
         <div className="flex-1" />
       )}

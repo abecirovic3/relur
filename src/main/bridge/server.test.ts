@@ -57,6 +57,15 @@ describe('HookBridge', () => {
     ]);
   });
 
+  it('refuses everything once closed for quitting, and dispatches nothing', async () => {
+    const hooks: unknown[] = [];
+    bridge.onHook((m) => hooks.push(m));
+    bridge.close();
+    expect((await post('/hook', { event: 'Stop', workspaceId: 'w1' })).status).toBe(503);
+    expect((await post('/statusline', { profileId: 'work' })).status).toBe(503);
+    expect(hooks).toEqual([]);
+  });
+
   it('rejects bad bodies and unknown routes', async () => {
     expect((await post('/hook', 'nope')).status).toBe(400);
     expect((await post('/hook', {})).status).toBe(400);

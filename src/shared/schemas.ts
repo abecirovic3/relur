@@ -194,6 +194,16 @@ const ProfileObjectSchema = z.object({
       doNotDisturb: z.boolean().default(false),
     })
     .prefault({}),
+  /**
+   * Spec §9.7: continue the work the app's stop interrupted when it starts
+   * again (off by default), with this prompt (unset: the default).
+   */
+  resume: z
+    .object({
+      continueAtStart: z.boolean().default(false),
+      prompt: z.string().min(1).nullish(),
+    })
+    .prefault({}),
 });
 export const ProfileSchema = z.preprocess(
   (raw: z.input<typeof ProfileObjectSchema>) => liftLookup(raw),
@@ -253,6 +263,8 @@ export const ConfigSchema = z
     ports: PortRangeSchema.optional(),
     /** macOS: closing the window quits instead of keeping the app running (spec §5). */
     quitOnWindowClose: z.boolean().optional(),
+    /** Check for Updates Automatically (spec §15.7); unset until the first-start question is answered. */
+    checkForUpdates: z.boolean().optional(),
   })
   .superRefine((config, ctx) => {
     const duplicates = (values: string[]) =>
